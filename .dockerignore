@@ -1,0 +1,10 @@
+node_modules/
+sesion_auth/*
+!sesion_auth/.gitkeep
+.git/
+.env
+.env.local
+bin/yt-dlp
+*.log
+npm-debug.log*
+.DS_Store

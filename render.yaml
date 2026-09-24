@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: yui-bot-whatsapp
+    runtime: docker
+    plan: free
+    region: oregon
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 3000
+      - key: GEMINI_API_KEY
+        sync: false
