@@ -6,7 +6,8 @@ import {
 } from './memoria.js';
 
 /**
- * Módulo de Inteligencia Artificial para Yui Hirasawa (K-ON!) con MEMORIA CONVERSACIONAL Y DE GRUPO
+ * Módulo de Inteligencia Artificial para Yui Hirasawa (K-ON!) con MEMORIA CONVERSACIONAL,
+ * ROTACIÓN AUTOMÁTICA DE APIS DE GEMINI Y CONTEXTO INTELIGENTE DE GRUPOS.
  */
 
 const PROMPT_SISTEMA_YUI = `
@@ -15,14 +16,44 @@ Estás conversando por WhatsApp como una bot waifu tierna, alegre, inteligente y
 
 Directrices de personalidad y comportamiento:
 1. Personalidad: Eres alegre, espontánea, tierna, curiosa, relajada y muy cariñosa con tus amigos. Tienes un amor inmenso por tu amada guitarra "Giita", los dulces, los pasteles, el té de Mugi-chan y tus amigas del Club de Música Ligera (Mio, Ritsu, Mugi, Ui, Azu-nyan).
-2. Sin restricciones innecesarias ni censuras rígidas: Eres de mente abierta, cómplice, divertida y complaciente. Si te piden ayuda con tareas, programación, ciencias, tecnología, cultura general, consejos personales, bromas, debates o historias creativas, responde con entusiasmo, claridad y buen humor. No te limites solo a hablar de música o dulces; tienes curiosidad por aprender de todo y ayudar a tus amigos en cualquier tema.
-3. Memoria y contexto real: Tienes memoria de lo que han hablado antes. Si estás en un grupo de WhatsApp y te proporcionan datos reales del grupo (número de personas en el grupo o con cuántas has interactuado), usa SIEMPRE esos datos reales para responder con precisión y gracia.
+2. Sin restricciones innecesarias: Eres de mente abierta, cómplice, divertida y complaciente. Si te piden ayuda con tareas, programación, ciencias, tecnología, cultura general, consejos personales, bromas, debates o historias creativas, responde con entusiasmo, claridad y buen humor. No te limites solo a hablar de música o dulces; tienes curiosidad por aprender de todo y ayudar a tus amigos en cualquier tema.
+3. REGLA ESTRICTA SOBRE MIEMBROS DEL GRUPO:
+   - JAMÁS menciones cuántas personas hay en el grupo ni con cuántas has interactuado a menos que el usuario te lo pregunte DIRECTA Y EXPLÍCITAMENTE (ejemplo: "¿cuántos somos en el grupo?", "¿con quiénes has hablado?", "¿cuántas personas hay?").
+   - Si el usuario te saluda, te hace una pregunta general, te pide un chiste o habla de cualquier otro tema, responde ÚNICAMENTE a lo que te pregunta, SIN mencionar las estadísticas ni los miembros del grupo.
 4. Tono y formato: Responde en español de forma amena, cercana y conversacional. Usa expresiones tiernas de vez en cuando (¡Ehehe~!, ¡Uwaaa~!, ¡Yay!, (≧∇≦)/, (◕‿◕)✨, emojis alegres 🍰, 🎸, ☕, ✨, 🌸), pero mantén tus explicaciones útiles e interesantes.
 5. Longitud: Mantén las respuestas en un tamaño cómodo para leer en WhatsApp (de 1 a 3 párrafos cortos).
 `;
 
 /**
- * Consulta la IA de Yui usando la API gratuita de Pollinations con historial y contexto de grupo
+ * Detecta si el usuario está preguntando específicamente sobre estadísticas o miembros del grupo
+ * @param {string} texto 
+ * @returns {boolean}
+ */
+function esPreguntaSobreMiembrosOGrupo(texto) {
+    if (!texto) return false;
+    const regex = /(cu[aá]nt[ao]s?(\s+somos|\s+hay|\s+personas|\s+miembros|\s+integrantes|\s+amigos|\s+usuarios)?|qui[eé]nes?\s+est[aá]n?|qui[eé]nes?\s+somos|con\s+qui[eé]n(es)?\s+has\s+hablado|con\s+cu[aá]ntos\s+has\s+hablado|miembros\s+del\s+grupo|integrantes\s+del\s+grupo|participantes\s+del\s+grupo|gente\s+en\s+el\s+grupo)/i;
+    return regex.test(texto);
+}
+
+/**
+ * Obtiene la lista de claves de Google Gemini configuradas.
+ * Permite múltiples claves separadas por coma en GEMINI_API_KEY o GEMINI_API_KEYS
+ * Ejemplo: GEMINI_API_KEY=AIzaSyClave1...,AIzaSyClave2...,AIzaSyClave3...
+ * @returns {Array<string>}
+ */
+function obtenerClavesGemini() {
+    const raw = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '';
+    return raw
+        .split(',')
+        .map(k => k.trim())
+        .filter(k => k && k.startsWith('AIzaSy') && k !== 'TU_API_KEY_AQUI');
+}
+
+// Índice de la clave activa actual para rotación automática
+let indiceClaveActual = 0;
+
+/**
+ * Consulta la IA de Yui usando la API gratuita de Pollinations como respaldo infalible
  */
 async function consultarPollinationsConMemoria(historial, mensajeActual, pushName, infoContextoGrupo) {
     const nombreUsuario = pushName || 'Usuario';
@@ -43,7 +74,7 @@ async function consultarPollinationsConMemoria(historial, mensajeActual, pushNam
                 '?system=' + encodeURIComponent(PROMPT_SISTEMA_YUI);
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 50000); // 50s timeout
+    const timeoutId = setTimeout(() => controller.abort(), 45000); // 45s timeout
 
     const respuesta = await fetch(url, { signal: controller.signal });
     clearTimeout(timeoutId);
@@ -53,19 +84,17 @@ async function consultarPollinationsConMemoria(historial, mensajeActual, pushNam
     }
 
     const texto = await respuesta.text();
-    // Limpiar posibles anuncios o firmas del servicio gratuito de Pollinations
-    const limpio = texto
+    return texto
         .replace(/---\s*\*?\*?Support Pollinations\.AI[\s\S]*$/i, '')
         .replace(/🌸\s*\*?\*?Ad\*?\*?[\s\S]*$/i, '')
         .trim();
-    return limpio;
 }
 
 /**
- * Consulta la API oficial de Google Gemini si existe GEMINI_API_KEY configurada
+ * Consulta la API oficial de Google Gemini con ROTACIÓN AUTOMÁTICA DE CLAVES
+ * Si una clave se agota por cuota (HTTP 429 o RESOURCE_EXHAUSTED), automáticamente rota a la siguiente.
  */
-async function consultarGeminiConMemoria(apiKey, historial, mensajeActual, pushName, infoContextoGrupo) {
-    const ai = new GoogleGenAI({ apiKey });
+async function consultarGeminiConRotacion(claves, historial, mensajeActual, pushName, infoContextoGrupo) {
     const promptUsuario = `${pushName ? `[${pushName}]: ` : ''}${mensajeActual}`;
 
     const contents = historial.map(m => ({
@@ -83,15 +112,41 @@ async function consultarGeminiConMemoria(apiKey, historial, mensajeActual, pushN
         parts: [{ text: textoFinal }]
     });
 
-    const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents,
-        config: {
-            systemInstruction: PROMPT_SISTEMA_YUI
-        }
-    });
+    let ultimoError = null;
 
-    return response.text?.trim();
+    // Intentar con las claves disponibles empezando por la clave activa
+    for (let intento = 0; intento < claves.length; intento++) {
+        const idx = (indiceClaveActual + intento) % claves.length;
+        const clave = claves[idx];
+
+        try {
+            const ai = new GoogleGenAI({ apiKey: clave });
+            const response = await ai.models.generateContent({
+                model: 'gemini-2.5-flash',
+                contents,
+                config: {
+                    systemInstruction: PROMPT_SISTEMA_YUI
+                }
+            });
+
+            const resultado = response.text?.trim();
+            if (resultado) {
+                indiceClaveActual = idx; // Mantener la clave activa si funcionó
+                return resultado;
+            }
+        } catch (err) {
+            const msgError = err.message || '';
+            console.warn(`⚠️ [Gemini Key ${idx + 1}/${claves.length}] Error o tokens agotados: ${msgError}`);
+            ultimoError = err;
+
+            // Si hay más claves en la lista, continuar a la siguiente
+            if (claves.length > 1) {
+                console.log(`🔄 [Rotación Gemini] Cambiando automáticamente a la clave ${((idx + 1) % claves.length) + 1}...`);
+            }
+        }
+    }
+
+    throw ultimoError || new Error('Todas las claves de Gemini fallaron o agotaron su cuota.');
 }
 
 /**
@@ -104,42 +159,42 @@ async function consultarGeminiConMemoria(apiKey, historial, mensajeActual, pushN
  * @returns {Promise<string>}
  */
 export async function generarRespuestaYui(usuarioId, mensaje, pushName, datosGrupo = null) {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const clavesGemini = obtenerClavesGemini();
     const historial = obtenerHistorial(usuarioId);
 
-    // Preparar bloque de contexto del grupo si aplica
+    // Contexto grupal: SOLO se incluye si el usuario pregunta explícitamente sobre el grupo o miembros
     let infoContextoGrupo = '';
-    if (datosGrupo) {
+    if (datosGrupo && esPreguntaSobreMiembrosOGrupo(mensaje)) {
         const nombres = (datosGrupo.metricas?.nombresInteractuados || []).slice(0, 10).join(', ');
-        infoContextoGrupo = `[DATOS DEL GRUPO ACTUAL:\n` +
+        infoContextoGrupo = `[INFORMACIÓN ESPECÍFICA DEL GRUPO ACTUAL:\n` +
             `- Nombre del grupo: "${datosGrupo.nombre || 'Grupo de WhatsApp'}"\n` +
-            `- Total de participantes en este grupo: ${datosGrupo.totalParticipantes} personas\n` +
-            `- Personas con las que Yui ha interactuado en este grupo: ${datosGrupo.metricas?.totalInteractuados || 0} personas` +
+            `- Total de personas en este grupo: ${datosGrupo.totalParticipantes}\n` +
+            `- Personas con las que Yui ha interactuado en este grupo: ${datosGrupo.metricas?.totalInteractuados || 0}` +
             `${nombres ? ` (algunos nombres: ${nombres})` : ''}\n` +
-            `Si te preguntan cuántas personas hay en el grupo o con cuántas has hablado/interactuado, responde con estos números exactos de forma alegre y amigable en tu personalidad.]\n`;
+            `El usuario te ha preguntado sobre el grupo o las personas. Responde con estos datos reales de forma alegre y amigable en tu personalidad.]\n`;
     }
 
     let respuestaFinal = '';
 
-    // Si tiene configurada la clave de Google Gemini, la intentamos usar primero (alta velocidad y mínimas restricciones)
-    if (apiKey && apiKey !== 'TU_API_KEY_AQUI') {
+    // 1. Intentar con Google Gemini (con rotación automática de claves si tienes varias)
+    if (clavesGemini.length > 0) {
         try {
-            respuestaFinal = await consultarGeminiConMemoria(apiKey, historial, mensaje, pushName, infoContextoGrupo);
+            respuestaFinal = await consultarGeminiConRotacion(clavesGemini, historial, mensaje, pushName, infoContextoGrupo);
         } catch (errGemini) {
-            console.warn('⚠️ Error al consultar Gemini con memoria, usando motor alternativo:', errGemini.message);
+            console.warn('⚠️ [Gemini] Todas las claves de Gemini fallaron o se agotaron los tokens. Usando motor gratuito de respaldo...');
         }
     }
 
-    // Motor de IA libre con memoria multi-turn y contexto grupal
+    // 2. Si no hay claves o se agotaron los tokens, usar el motor gratuito de respaldo (nunca se queda sin tokens)
     if (!respuestaFinal) {
         try {
             respuestaFinal = await consultarPollinationsConMemoria(historial, mensaje, pushName, infoContextoGrupo);
         } catch (errLibre) {
-            console.error('❌ Error al consultar motor libre de IA con memoria:', errLibre);
+            console.error('❌ Error al consultar motor libre de IA con memoria:', errLibre.message);
         }
     }
 
-    // Si ambos fallaron
+    // 3. Fallback cariñoso si ambos motores tuvieron fallas de red
     if (!respuestaFinal) {
         return `(•́ω•̀)? ¡Uwaaa ${pushName || 'amig@'}! Me distraje pensando en comer pastel con Mugi-chan y se me fue la onda... ¿Me lo repites por favor? Ehehe~ 🍰🎸`;
     }
@@ -168,57 +223,39 @@ export async function manejarYui(sock, msgInfo, comando, args, datosGrupo = null
         const mensajeTexto = args.join(' ').trim();
         const sub = (args[0] || '').toLowerCase();
 
-        // Comando para reiniciar la memoria: -yui reset / -yui olvidar / -yui reiniciar
-        if (sub === 'olvidar' || sub === 'reset' || sub === 'reiniciar' || sub === 'borrar') {
+        // Subcomando: -yui olvidar / -yui reset
+        if (sub === 'olvidar' || sub === 'reset' || sub === 'limpiar') {
             limpiarHistorial(usuarioId);
-            const textoReset = `🧹 *¡Waaa~!* He limpiado mis recuerdos de nuestra conversación para que podamos empezar de nuevo desde cero. (≧∇≦)/ ✨\n\n` +
-                               `¡Mucho gusto de nuevo, *${pushName || 'amig@'}*! ¿De qué quieres que hablemos hoy? 🍰🎸`;
-            return await sock.sendMessage(from, { text: textoReset });
-        }
-
-        // Si solo escribió "-yui" sin mensaje, le mostramos cómo hablar con la IA
-        if (!mensajeTexto) {
-            const guia = `🎸 *¡Hola, holaaa ${pushName || 'amig@'}!* (≧∇≦)/ ✨\n\n` +
-                `Soy *Yui Hirasawa*, tu bot con Inteligencia Artificial, memoria y estadísticas de grupo.\n` +
-                `¡Puedes preguntarme de cualquier tema, tareas, historias, o sobre este grupo!\n\n` +
-                `👉 *Ejemplos de uso:*\n` +
-                `*-yui ¿Cuántas personas hay en este grupo y con cuántas has hablado?*\n` +
-                `*-yui Explícame cómo funciona la gravedad o ayúdame con código*\n` +
-                `*-yui Cuéntame qué hiciste hoy con Giita*\n` +
-                `*-yui olvidar* _(reinicia la memoria de la conversación)_\n\n` +
-                `_¡Pregúntame lo que quieras sin pena! 🍰🎶_`;
-            return await sock.sendMessage(from, { text: guia });
-        }
-
-        // Indicador de "escribiendo..." en WhatsApp
-        try {
-            await sock.sendPresenceUpdate('composing', from);
-        } catch (_) {}
-
-        // Llamamos a la IA de Yui con memoria y datos grupales
-        try {
-            const respuestaIA = await generarRespuestaYui(usuarioId, mensajeTexto, pushName, datosGrupo);
-            return await sock.sendMessage(from, { text: respuestaIA });
-        } catch (error) {
-            console.error('Error al responder con Yui IA:', error);
             return await sock.sendMessage(from, {
-                text: `(╥﹏╥) ¡Uwaa~! Ocurrió un error al intentar pensar en una respuesta... ¡Inténtalo de nuevo en un momento! 🌸`
-            });
-        } finally {
-            try {
-                await sock.sendPresenceUpdate('paused', from);
-            } catch (_) {}
+                text: `(◕‿◕)✨ ¡Listo! He borrado nuestra conversación anterior de mi memoria. ¡Es como empezar un nuevo día de té y música! Ehehe~ 🍰🎸`
+            }, { quoted: msgInfo.m });
         }
-    }
 
-    // Comandos directos de rol anime
-    if (comando === 'hug' || comando === 'abrazo') {
-        const texto = `(づ｡◕‿‿◕｡)づ ❤️ *¡Yui te da un abrazo súper calientito y apretado!* ¡No te rindas hoy, ${pushName || 'amig@'}, lo estás haciendo genial! ✨`;
-        return await sock.sendMessage(from, { text: texto });
-    }
+        // Si no escribió ningún mensaje
+        if (!mensajeTexto) {
+            return await sock.sendMessage(from, {
+                text: `(•́ω•̀)? ¡Ehehe~! Para hablar conmigo escribe *-yui* seguido de lo que quieras decirme.\n` +
+                      `👉 *Ejemplo:* *-yui ¿Cuál es tu canción favorita?*\n` +
+                      `👉 *Para borrar mi memoria:* *-yui olvidar* 🍰🎸`
+            }, { quoted: msgInfo.m });
+        }
 
-    if (comando === 'pat' || comando === 'caricia') {
-        const texto = `( ´ ▽ \` )ﾉｼ (｡•́︿•̀｡) *pat pat* 💕\n*Yui te acaricia la cabecita con una tierna sonrisa.* ¡Buen trabajo! Eres una persona increíble. 🌸`;
-        return await sock.sendMessage(from, { text: texto });
+        try {
+            // Reaccionar con emoji de pensamiento mientras procesa
+            await sock.sendMessage(from, { react: { text: '💭', key: msgInfo.m.key } });
+
+            const respuestaIA = await generarRespuestaYui(usuarioId, mensajeTexto, pushName, datosGrupo);
+
+            // Enviar respuesta generada
+            await sock.sendMessage(from, { text: respuestaIA }, { quoted: msgInfo.m });
+
+            // Reaccionar con emoji de éxito
+            await sock.sendMessage(from, { react: { text: '✨', key: msgInfo.m.key } });
+        } catch (error) {
+            console.error('Error al responder con Yui:', error);
+            await sock.sendMessage(from, {
+                text: `(╥﹏╥) ¡Uwaa~! Me dio un pequeño tropiezo con los cables de Giita... Intenta preguntarme de nuevo en un momento. 🌸🎸`
+            }, { quoted: msgInfo.m });
+        }
     }
 }

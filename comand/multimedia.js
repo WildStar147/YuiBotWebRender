@@ -4,6 +4,7 @@ import os from 'os';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { downloadContentFromMessage } from '@whiskeysockets/baileys';
+import { obtenerRutaFfmpeg } from './binarios.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -74,8 +75,9 @@ async function convertirImagenASticker(bufferImagen) {
     try {
         fs.writeFileSync(rutaEntrada, bufferImagen);
 
+        const binFfmpeg = await obtenerRutaFfmpeg();
         const filtro = 'scale=512:512:force_original_aspect_ratio=decrease,format=rgba,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=#00000000';
-        await execFileAsync('ffmpeg', [
+        await execFileAsync(binFfmpeg, [
             '-y',
             '-i', rutaEntrada,
             '-vf', filtro,
@@ -99,8 +101,9 @@ async function convertirVideoASticker(bufferVideo) {
     try {
         fs.writeFileSync(rutaEntrada, bufferVideo);
 
+        const binFfmpeg = await obtenerRutaFfmpeg();
         const filtro = 'scale=512:512:force_original_aspect_ratio=decrease,format=rgba,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=#00000000,fps=12';
-        await execFileAsync('ffmpeg', [
+        await execFileAsync(binFfmpeg, [
             '-y',
             '-i', rutaEntrada,
             '-ss', '00:00:00',
@@ -128,7 +131,8 @@ async function convertirStickerAImagen(bufferSticker) {
     try {
         fs.writeFileSync(rutaEntrada, bufferSticker);
 
-        await execFileAsync('ffmpeg', [
+        const binFfmpeg = await obtenerRutaFfmpeg();
+        await execFileAsync(binFfmpeg, [
             '-y',
             '-i', rutaEntrada,
             rutaSalida
@@ -151,7 +155,8 @@ async function convertirStickerAGif(bufferWebp) {
     try {
         fs.writeFileSync(rutaEntrada, bufferWebp);
 
-        await execFileAsync('ffmpeg', [
+        const binFfmpeg = await obtenerRutaFfmpeg();
+        await execFileAsync(binFfmpeg, [
             '-y',
             '-i', rutaEntrada,
             '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p',
@@ -179,7 +184,8 @@ async function aplicarFiltroAudio(bufferAudio, filtroFfmpeg) {
     try {
         fs.writeFileSync(rutaEntrada, bufferAudio);
 
-        await execFileAsync('ffmpeg', [
+        const binFfmpeg = await obtenerRutaFfmpeg();
+        await execFileAsync(binFfmpeg, [
             '-y',
             '-i', rutaEntrada,
             '-af', filtroFfmpeg,
@@ -217,8 +223,9 @@ async function generarMemeConTexto(bufferImagen, textoArriba, textoAbajo) {
         }
 
         const cadenaFiltros = filtros.join(',');
+        const binFfmpeg = await obtenerRutaFfmpeg();
 
-        await execFileAsync('ffmpeg', [
+        await execFileAsync(binFfmpeg, [
             '-y',
             '-i', rutaEntrada,
             '-vf', cadenaFiltros,

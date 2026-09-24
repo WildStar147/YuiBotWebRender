@@ -5,14 +5,11 @@ import { fileURLToPath } from 'url';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import yts from 'yt-search';
+import { obtenerRutaFfmpeg, obtenerRutaYtDlp } from './binarios.js';
 
 const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-// Ruta al binario de yt-dlp (busca en ./bin/yt-dlp o en el PATH del sistema)
-const RUTA_BIN_LOCAL = path.join(__dirname, '..', 'bin', 'yt-dlp');
-const RUTA_YTDLP = fs.existsSync(RUTA_BIN_LOCAL) ? RUTA_BIN_LOCAL : 'yt-dlp';
 
 /**
  * Genera una ruta de archivo temporal segura
@@ -25,27 +22,67 @@ function generarRutaTemporal(extension) {
 }
 
 /**
- * Descarga y extrae audio en formato MP3 desde YouTube o cualquier plataforma compatible
+ * Descarga directa de TikTok sin marca de agua vía API rápida (Bajo consumo de RAM y sin bloqueos de IP)
  * @param {string} url 
- * @returns {Promise<{ rutaArchivo: string, titulo: string, duracion: string, autor: string }>}
+ * @returns {Promise<{ buffer: Buffer, titulo: string }>}
+ */
+async function descargarTikTokDirecto(url) {
+    const apiUrl = `https://www.tikwm.com/api/?url=${encodeURIComponent(url)}`;
+    const res = await fetch(apiUrl, {
+        headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+    });
+
+    if (!res.ok) {
+        throw new Error(`API de TikTok respondió con código ${res.status}`);
+    }
+
+    const data = await res.json();
+    if (data && data.data && (data.data.play || data.data.wmplay)) {
+        const videoUrl = data.data.play || data.data.wmplay;
+        const titulo = data.data.title || 'Video de TikTok';
+        const videoRes = await fetch(videoUrl);
+        if (!videoRes.ok) throw new Error('Error al descargar el stream del video de TikTok');
+        const arrayBuf = await videoRes.arrayBuffer();
+        return { buffer: Buffer.from(arrayBuf), titulo };
+    }
+
+    throw new Error('No se encontró enlace de video en la respuesta de TikTok');
+}
+
+/**
+ * Descarga y extrae audio en formato MP3 usando yt-dlp y FFmpeg
+ * @param {string} url 
+ * @returns {Promise<{ rutaArchivo: string, titulo: string }>}
  */
 async function descargarAudioYtDlp(url) {
+    const binYtdlp = await obtenerRutaYtDlp();
+    const binFfmpeg = await obtenerRutaFfmpeg();
+
     const plantillaSalida = path.join(os.tmpdir(), `yui_yt_audio_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`);
     const rutaMp3 = `${plantillaSalida}.mp3`;
 
-    // Extraer título primero
+    // Extraer título primero de forma rápida
     let titulo = 'Audio';
     try {
-        const { stdout } = await execFileAsync(RUTA_YTDLP, ['--js-runtimes', 'node', '--print', '%(title)s', url]);
+        const { stdout } = await execFileAsync(binYtdlp, [
+            '--no-playlist',
+            '--print', '%(title)s',
+            url
+        ]);
         titulo = stdout.trim() || 'Audio';
     } catch (_) {}
 
-    await execFileAsync(RUTA_YTDLP, [
-        '--js-runtimes', 'node',
+    await execFileAsync(binYtdlp, [
+        '--no-playlist',
+        '--ffmpeg-location', binFfmpeg,
+        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         '-f', 'ba/b',
         '-x',
         '--audio-format', 'mp3',
         '--audio-quality', '0',
+        '--max-filesize', '50M',
         '-o', `${plantillaSalida}.%(ext)s`,
         url
     ]);
@@ -58,24 +95,34 @@ async function descargarAudioYtDlp(url) {
 }
 
 /**
- * Descarga video en formato MP4 (TikTok, YouTube, Instagram)
+ * Descarga video en formato MP4 (YouTube, Instagram, Facebook, etc.) optimizado para WhatsApp (máx 720p)
  * @param {string} url 
  * @returns {Promise<{ rutaArchivo: string, titulo: string }>}
  */
 async function descargarVideoYtDlp(url) {
+    const binYtdlp = await obtenerRutaYtDlp();
+    const binFfmpeg = await obtenerRutaFfmpeg();
+
     const plantillaSalida = path.join(os.tmpdir(), `yui_dl_video_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`);
     const rutaMp4 = `${plantillaSalida}.mp4`;
 
     let titulo = 'Video';
     try {
-        const { stdout } = await execFileAsync(RUTA_YTDLP, ['--js-runtimes', 'node', '--print', '%(title)s', url]);
+        const { stdout } = await execFileAsync(binYtdlp, [
+            '--no-playlist',
+            '--print', '%(title)s',
+            url
+        ]);
         titulo = stdout.trim() || 'Video';
     } catch (_) {}
 
-    await execFileAsync(RUTA_YTDLP, [
-        '--js-runtimes', 'node',
-        '-f', 'b/bv*+ba',
+    await execFileAsync(binYtdlp, [
+        '--no-playlist',
+        '--ffmpeg-location', binFfmpeg,
+        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        '-f', 'bv*[height<=720]+ba/b[height<=720]/b',
         '--recode-video', 'mp4',
+        '--max-filesize', '60M',
         '-o', `${plantillaSalida}.%(ext)s`,
         url
     ]);
@@ -104,14 +151,26 @@ export async function manejarTikTok(sock, msgInfo, args) {
     try {
         await sock.sendMessage(from, { react: { text: '⏳', key: m.key } });
 
-        const { rutaArchivo, titulo } = await descargarVideoYtDlp(enlace);
-        const bufferVideo = fs.readFileSync(rutaArchivo);
-        fs.unlinkSync(rutaArchivo);
+        // Intentar primero con la API directa sin marca de agua (ultra rápida y ligera para 512MB RAM)
+        let bufferVideo = null;
+        let tituloVideo = 'TikTok Video';
+
+        try {
+            const resDirecta = await descargarTikTokDirecto(enlace);
+            bufferVideo = resDirecta.buffer;
+            tituloVideo = resDirecta.titulo;
+        } catch (errDirecta) {
+            console.warn('⚠️ Falló API directa de TikTok, intentando con yt-dlp:', errDirecta.message);
+            const { rutaArchivo, titulo } = await descargarVideoYtDlp(enlace);
+            bufferVideo = fs.readFileSync(rutaArchivo);
+            tituloVideo = titulo;
+            if (fs.existsSync(rutaArchivo)) fs.unlinkSync(rutaArchivo);
+        }
 
         await sock.sendMessage(from, {
             video: bufferVideo,
             caption: `🎬 *TikTok Descargado* (≧∇≦)/ ✨\n` +
-                     `📌 *Título:* ${titulo}\n\n` +
+                     `📌 *Título:* ${tituloVideo}\n\n` +
                      `_¡Descargado con Yui Bot! 🍰🎸_`
         }, { quoted: m });
 
@@ -162,7 +221,7 @@ export async function manejarYouTubeMP3(sock, msgInfo, args) {
 
         const { rutaArchivo, titulo } = await descargarAudioYtDlp(urlDescarga);
         const bufferMp3 = fs.readFileSync(rutaArchivo);
-        fs.unlinkSync(rutaArchivo);
+        if (fs.existsSync(rutaArchivo)) fs.unlinkSync(rutaArchivo);
 
         // Enviar audio
         await sock.sendMessage(from, {
@@ -224,7 +283,7 @@ export async function manejarYouTubeMP4(sock, msgInfo, args) {
 
         const { rutaArchivo, titulo } = await descargarVideoYtDlp(urlDescarga);
         const bufferVideo = fs.readFileSync(rutaArchivo);
-        fs.unlinkSync(rutaArchivo);
+        if (fs.existsSync(rutaArchivo)) fs.unlinkSync(rutaArchivo);
 
         await sock.sendMessage(from, {
             video: bufferVideo,
@@ -261,7 +320,7 @@ export async function manejarInstagram(sock, msgInfo, args) {
 
         const { rutaArchivo, titulo } = await descargarVideoYtDlp(enlace);
         const bufferVideo = fs.readFileSync(rutaArchivo);
-        fs.unlinkSync(rutaArchivo);
+        if (fs.existsSync(rutaArchivo)) fs.unlinkSync(rutaArchivo);
 
         await sock.sendMessage(from, {
             video: bufferVideo,
