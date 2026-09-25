@@ -63,11 +63,22 @@ async function descargarAudioYtDlp(url) {
     const plantillaSalida = path.join(os.tmpdir(), `yui_yt_audio_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`);
     const rutaMp3 = `${plantillaSalida}.mp3`;
 
+    // Argumentos para evitar detección de bots en servidores y enlazar FFmpeg
+    const argsComunes = [
+        '--no-playlist',
+        '--js-runtimes', 'node',
+        '--extractor-args', 'youtube:player_client=android,web'
+    ];
+
+    if (binFfmpeg && binFfmpeg !== 'ffmpeg' && fs.existsSync(binFfmpeg)) {
+        argsComunes.push('--ffmpeg-location', path.dirname(binFfmpeg));
+    }
+
     // Extraer título primero de forma rápida
     let titulo = 'Audio';
     try {
         const { stdout } = await execFileAsync(binYtdlp, [
-            '--no-playlist',
+            ...argsComunes,
             '--print', '%(title)s',
             url
         ]);
@@ -75,9 +86,7 @@ async function descargarAudioYtDlp(url) {
     } catch (_) {}
 
     await execFileAsync(binYtdlp, [
-        '--no-playlist',
-        '--ffmpeg-location', binFfmpeg,
-        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        ...argsComunes,
         '-f', 'ba/b',
         '-x',
         '--audio-format', 'mp3',
@@ -106,10 +115,20 @@ async function descargarVideoYtDlp(url) {
     const plantillaSalida = path.join(os.tmpdir(), `yui_dl_video_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`);
     const rutaMp4 = `${plantillaSalida}.mp4`;
 
+    const argsComunes = [
+        '--no-playlist',
+        '--js-runtimes', 'node',
+        '--extractor-args', 'youtube:player_client=android,web'
+    ];
+
+    if (binFfmpeg && binFfmpeg !== 'ffmpeg' && fs.existsSync(binFfmpeg)) {
+        argsComunes.push('--ffmpeg-location', path.dirname(binFfmpeg));
+    }
+
     let titulo = 'Video';
     try {
         const { stdout } = await execFileAsync(binYtdlp, [
-            '--no-playlist',
+            ...argsComunes,
             '--print', '%(title)s',
             url
         ]);
@@ -117,9 +136,7 @@ async function descargarVideoYtDlp(url) {
     } catch (_) {}
 
     await execFileAsync(binYtdlp, [
-        '--no-playlist',
-        '--ffmpeg-location', binFfmpeg,
-        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        ...argsComunes,
         '-f', 'bv*[height<=720]+ba/b[height<=720]/b',
         '--recode-video', 'mp4',
         '--max-filesize', '60M',

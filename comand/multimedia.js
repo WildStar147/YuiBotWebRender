@@ -178,8 +178,8 @@ async function convertirStickerAGif(bufferWebp) {
  * Aplica un filtro de audio con FFmpeg
  */
 async function aplicarFiltroAudio(bufferAudio, filtroFfmpeg) {
-    const rutaEntrada = generarRutaTemporal('mp3');
-    const rutaSalida = generarRutaTemporal('mp3');
+    const rutaEntrada = generarRutaTemporal('bin');
+    const rutaSalida = generarRutaTemporal('ogg');
 
     try {
         fs.writeFileSync(rutaEntrada, bufferAudio);
@@ -189,6 +189,10 @@ async function aplicarFiltroAudio(bufferAudio, filtroFfmpeg) {
             '-y',
             '-i', rutaEntrada,
             '-af', filtroFfmpeg,
+            '-c:a', 'libopus',
+            '-b:a', '64k',
+            '-vbr', 'on',
+            '-vn',
             rutaSalida
         ]);
 
@@ -465,7 +469,7 @@ export async function manejarFiltroAudio(sock, msgInfo, efecto) {
 
         await sock.sendMessage(from, {
             audio: bufferModificado,
-            mimetype: 'audio/mp4',
+            mimetype: 'audio/ogg; codecs=opus',
             ptt: true
         }, { quoted: m });
 

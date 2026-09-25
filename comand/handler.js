@@ -1,4 +1,10 @@
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { manejarYui } from './yui.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 import { manejarAdmin } from './admin.js';
 import {
     manejarCrearSticker,
@@ -120,9 +126,18 @@ export async function procesarMensajes(sock, chatUpdate) {
             messageTimestamp: m.messageTimestamp
         };
 
-        // Menú principal
+        // Menú principal con imagen banner de Yui
         if (comando === 'menu' || comando === 'help' || comando === 'ayuda') {
-            await sock.sendMessage(from, { text: generarMenu(pushName) });
+            const rutaBanner = path.join(__dirname, '..', 'assets', 'banner_yui.jpg');
+            if (fs.existsSync(rutaBanner)) {
+                const bufferBanner = fs.readFileSync(rutaBanner);
+                await sock.sendMessage(from, {
+                    image: bufferBanner,
+                    caption: generarMenu(pushName)
+                }, { quoted: m });
+            } else {
+                await sock.sendMessage(from, { text: generarMenu(pushName) }, { quoted: m });
+            }
             continue;
         }
 
