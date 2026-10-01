@@ -52,6 +52,40 @@ async function descargarTikTokDirecto(url) {
 }
 
 /**
+ * Obtiene la ruta a un archivo de cookies si está configurado en entorno o localmente.
+ * Permite configurar YOUTUBE_COOKIES en Render para bypass total de restricciones.
+ * @returns {string|null}
+ */
+function obtenerRutaCookies() {
+    if (process.env.YOUTUBE_COOKIES && process.env.YOUTUBE_COOKIES.trim()) {
+        try {
+            const contenido = process.env.YOUTUBE_COOKIES.trim();
+            const ruta = path.join(os.tmpdir(), 'yui_yt_cookies.txt');
+            if (contenido.startsWith('IyB') || (!contenido.includes('\t') && contenido.length > 50)) {
+                fs.writeFileSync(ruta, Buffer.from(contenido, 'base64').toString('utf-8'));
+            } else {
+                fs.writeFileSync(ruta, contenido);
+            }
+            return ruta;
+        } catch (e) {
+            console.warn('⚠️ Error al procesar YOUTUBE_COOKIES:', e.message);
+        }
+    }
+
+    const posiblesRutas = [
+        path.join(process.cwd(), 'cookies.txt'),
+        path.join(__dirname, '..', 'cookies.txt'),
+        path.join(os.tmpdir(), 'cookies.txt')
+    ];
+
+    for (const r of posiblesRutas) {
+        if (fs.existsSync(r)) return r;
+    }
+
+    return null;
+}
+
+/**
  * Descarga y extrae audio en formato MP3 usando yt-dlp y FFmpeg
  * @param {string} url 
  * @returns {Promise<{ rutaArchivo: string, titulo: string }>}
@@ -63,12 +97,17 @@ async function descargarAudioYtDlp(url) {
     const plantillaSalida = path.join(os.tmpdir(), `yui_yt_audio_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`);
     const rutaMp3 = `${plantillaSalida}.mp3`;
 
-    // Argumentos para evitar detección de bots en servidores y enlazar FFmpeg
+    const rutaCookies = obtenerRutaCookies();
+    // Argumentos para evitar detección de bots en servidores y resolver desafíos JS
     const argsComunes = [
         '--no-playlist',
         '--js-runtimes', 'node',
-        '--extractor-args', 'youtube:player_client=tv_downgraded,android,web'
+        '--extractor-args', 'youtube:player_client=web_embedded,web,android'
     ];
+
+    if (rutaCookies) {
+        argsComunes.push('--cookies', rutaCookies);
+    }
 
     if (binFfmpeg && binFfmpeg !== 'ffmpeg' && fs.existsSync(binFfmpeg)) {
         argsComunes.push('--ffmpeg-location', path.dirname(binFfmpeg));
@@ -115,11 +154,16 @@ async function descargarVideoYtDlp(url) {
     const plantillaSalida = path.join(os.tmpdir(), `yui_dl_video_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`);
     const rutaMp4 = `${plantillaSalida}.mp4`;
 
+    const rutaCookies = obtenerRutaCookies();
     const argsComunes = [
         '--no-playlist',
         '--js-runtimes', 'node',
-        '--extractor-args', 'youtube:player_client=tv_downgraded,android,web'
+        '--extractor-args', 'youtube:player_client=web_embedded,web,android'
     ];
+
+    if (rutaCookies) {
+        argsComunes.push('--cookies', rutaCookies);
+    }
 
     if (binFfmpeg && binFfmpeg !== 'ffmpeg' && fs.existsSync(binFfmpeg)) {
         argsComunes.push('--ffmpeg-location', path.dirname(binFfmpeg));
