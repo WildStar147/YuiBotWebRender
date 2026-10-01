@@ -5,6 +5,8 @@ import { fileURLToPath } from 'url';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import yts from 'yt-search';
+import { Downloader as tiktokDownloader } from '@tobyg74/tiktok-api-dl';
+import Instagram from 'cakkatrok-instagram-downloader';
 import { obtenerRutaFfmpeg, obtenerRutaYtDlp } from './binarios.js';
 
 const execFileAsync = promisify(execFile);
@@ -22,64 +24,131 @@ function generarRutaTemporal(extension) {
 }
 
 /**
- * Descarga directa de TikTok sin marca de agua vía API rápida (Bajo consumo de RAM y sin bloqueos de IP)
+ * Descarga directa de TikTok sin marca de agua vía múltiples APIs rápidas (Bajo consumo de RAM y sin bloqueos de IP)
  * @param {string} url 
  * @returns {Promise<{ buffer: Buffer, titulo: string }>}
  */
 async function descargarTikTokDirecto(url) {
-    const apiUrl = `https://www.tikwm.com/api/?url=${encodeURIComponent(url)}`;
-    const res = await fetch(apiUrl, {
-        headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    // Método 1: @tobyg74/tiktok-api-dl (v3, v1, v2)
+    for (const ver of ['v3', 'v1', 'v2']) {
+        try {
+            const res = await tiktokDownloader(url, { version: ver });
+            if (res && res.status === 'success' && res.result) {
+                const videoUrl = res.result.videoHD || res.result.videoSD || res.result.videoWatermark || res.result.video?.playAddr || res.result.play;
+                const titulo = res.result.desc || res.result.title || 'Video de TikTok';
+                if (videoUrl) {
+                    const vRes = await fetch(videoUrl, {
+                        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+                        signal: AbortSignal.timeout(15000)
+                    });
+                    if (vRes.ok) {
+                        const buffer = Buffer.from(await vRes.arrayBuffer());
+                        if (buffer.length > 1000) return { buffer, titulo };
+                    }
+                }
+            }
+        } catch (_) {}
+    }
+
+    // Método 2: API de respaldo tioo
+    try {
+        const resTioo = await fetch('https://backend1.tioo.eu.org/ttdl?url=' + encodeURIComponent(url), {
+            headers: { 'User-Agent': 'btch/6.4.0', 'X-Client-Version': '6.4.0' },
+            signal: AbortSignal.timeout(12000)
+        });
+        if (resTioo.ok) {
+            const dataTioo = await resTioo.json();
+            const videoUrl = dataTioo.video?.noWatermark || dataTioo.video?.watermark || dataTioo.video;
+            const titulo = dataTioo.title || 'Video de TikTok';
+            if (videoUrl && typeof videoUrl === 'string') {
+                const vRes = await fetch(videoUrl, { signal: AbortSignal.timeout(15000) });
+                if (vRes.ok) {
+                    const buffer = Buffer.from(await vRes.arrayBuffer());
+                    if (buffer.length > 1000) return { buffer, titulo };
+                }
+            }
         }
-    });
+    } catch (_) {}
 
-    if (!res.ok) {
-        throw new Error(`API de TikTok respondió con código ${res.status}`);
-    }
+    // Método 3: tikwm con cabeceras modernas
+    try {
+        const apiUrl = `https://www.tikwm.com/api/?url=${encodeURIComponent(url)}`;
+        const res = await fetch(apiUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+                'Accept': 'application/json, text/plain, */*'
+            },
+            signal: AbortSignal.timeout(10000)
+        });
+        if (res.ok) {
+            const data = await res.json();
+            if (data && data.data && (data.data.play || data.data.wmplay)) {
+                const videoUrl = data.data.play || data.data.wmplay;
+                const titulo = data.data.title || 'Video de TikTok';
+                const videoRes = await fetch(videoUrl, { signal: AbortSignal.timeout(15000) });
+                if (videoRes.ok) {
+                    const arrayBuf = await videoRes.arrayBuffer();
+                    return { buffer: Buffer.from(arrayBuf), titulo };
+                }
+            }
+        }
+    } catch (_) {}
 
-    const data = await res.json();
-    if (data && data.data && (data.data.play || data.data.wmplay)) {
-        const videoUrl = data.data.play || data.data.wmplay;
-        const titulo = data.data.title || 'Video de TikTok';
-        const videoRes = await fetch(videoUrl);
-        if (!videoRes.ok) throw new Error('Error al descargar el stream del video de TikTok');
-        const arrayBuf = await videoRes.arrayBuffer();
-        return { buffer: Buffer.from(arrayBuf), titulo };
-    }
-
-    throw new Error('No se encontró enlace de video en la respuesta de TikTok');
+    throw new Error('No se pudo obtener el enlace de TikTok mediante las APIs directas.');
 }
 
 /**
- * Obtiene la ruta a un archivo de cookies si está configurado en entorno o localmente.
- * Permite configurar YOUTUBE_COOKIES en Render para bypass total de restricciones.
+ * Obtiene la ruta a un archivo de cookies si está configurado en entorno, Secret Files de Render o localmente.
+ * Permite configurar COOKIES o YOUTUBE_COOKIES en Render para bypass total de restricciones de YouTube e Instagram.
  * @returns {string|null}
  */
-function obtenerRutaCookies() {
-    if (process.env.YOUTUBE_COOKIES && process.env.YOUTUBE_COOKIES.trim()) {
+export function obtenerRutaCookies() {
+    // 1. Revisar variables de entorno (COOKIES, YOUTUBE_COOKIES, COOKIE, YT_COOKIES, etc.)
+    const cookieEnv = process.env.COOKIES || 
+                      process.env.YOUTUBE_COOKIES || 
+                      process.env.COOKIE || 
+                      process.env.YT_COOKIES || 
+                      process.env.INSTAGRAM_COOKIES || 
+                      process.env.COOKIES_TXT || 
+                      process.env.NETSCAPE_COOKIES;
+
+    if (cookieEnv && cookieEnv.trim()) {
         try {
-            const contenido = process.env.YOUTUBE_COOKIES.trim();
-            const ruta = path.join(os.tmpdir(), 'yui_yt_cookies.txt');
+            const contenido = cookieEnv.trim();
+            const ruta = path.join(os.tmpdir(), 'yui_cookies.txt');
+            // Detectar base64 o texto directo Netscape
             if (contenido.startsWith('IyB') || (!contenido.includes('\t') && contenido.length > 50)) {
                 fs.writeFileSync(ruta, Buffer.from(contenido, 'base64').toString('utf-8'));
             } else {
                 fs.writeFileSync(ruta, contenido);
             }
-            return ruta;
+            if (fs.existsSync(ruta) && fs.statSync(ruta).size > 10) {
+                return ruta;
+            }
         } catch (e) {
-            console.warn('⚠️ Error al procesar YOUTUBE_COOKIES:', e.message);
+            console.warn('⚠️ Error al procesar variable de entorno de cookies:', e.message);
         }
     }
 
+    // 2. Revisar archivos en disco (incluyendo Secret Files de Render en /etc/secrets/)
     const posiblesRutas = [
         path.join(process.cwd(), 'cookies.txt'),
         path.join(__dirname, '..', 'cookies.txt'),
-        path.join(os.tmpdir(), 'cookies.txt')
+        path.join(os.tmpdir(), 'cookies.txt'),
+        path.join(os.tmpdir(), 'yui_cookies.txt'),
+        path.join(os.tmpdir(), 'yui_yt_cookies.txt'),
+        '/etc/secrets/cookies.txt',
+        '/etc/secrets/cookies',
+        '/etc/secrets/youtube_cookies.txt',
+        '/etc/secrets/YOUTUBE_COOKIES'
     ];
 
     for (const r of posiblesRutas) {
-        if (fs.existsSync(r)) return r;
+        if (fs.existsSync(r)) {
+            try {
+                if (fs.statSync(r).size > 10) return r;
+            } catch (_) {}
+        }
     }
 
     return null;
@@ -98,15 +167,22 @@ async function descargarAudioYtDlp(url) {
     const rutaMp3 = `${plantillaSalida}.mp3`;
 
     const rutaCookies = obtenerRutaCookies();
-    // Argumentos para evitar detección de bots en servidores y resolver desafíos JS
     const argsComunes = [
         '--no-playlist',
-        '--js-runtimes', 'node',
-        '--extractor-args', 'youtube:player_client=web_embedded,web,android'
+        '--js-runtimes', 'node'
     ];
 
     if (rutaCookies) {
         argsComunes.push('--cookies', rutaCookies);
+        if (url.includes('youtube.com') || url.includes('youtu.be')) {
+            argsComunes.push('--extractor-args', 'youtube:player_client=android,web');
+        }
+    } else {
+        // En servidores en la nube (como Render en AWS), YouTube bloquea clientes web con HTTP Error 429
+        // El cliente 'android' evita el bloqueo de bot y la tasa de peticiones 429
+        if (url.includes('youtube.com') || url.includes('youtu.be')) {
+            argsComunes.push('--extractor-args', 'youtube:player_client=android');
+        }
     }
 
     if (binFfmpeg && binFfmpeg !== 'ffmpeg' && fs.existsSync(binFfmpeg)) {
@@ -157,12 +233,19 @@ async function descargarVideoYtDlp(url) {
     const rutaCookies = obtenerRutaCookies();
     const argsComunes = [
         '--no-playlist',
-        '--js-runtimes', 'node',
-        '--extractor-args', 'youtube:player_client=web_embedded,web,android'
+        '--js-runtimes', 'node'
     ];
 
     if (rutaCookies) {
         argsComunes.push('--cookies', rutaCookies);
+        if (url.includes('youtube.com') || url.includes('youtu.be')) {
+            argsComunes.push('--extractor-args', 'youtube:player_client=android,web');
+        }
+    } else {
+        if (url.includes('youtube.com') || url.includes('youtu.be')) {
+            // El cliente android no activa el error 429 "Sign in to confirm you're not a bot" en datacenters
+            argsComunes.push('--extractor-args', 'youtube:player_client=android');
+        }
     }
 
     if (binFfmpeg && binFfmpeg !== 'ffmpeg' && fs.existsSync(binFfmpeg)) {
@@ -237,7 +320,6 @@ export async function manejarTikTok(sock, msgInfo, args) {
     try {
         await sock.sendMessage(from, { react: { text: '⏳', key: m.key } });
 
-        // Intentar primero con la API directa sin marca de agua (ultra rápida y ligera para 512MB RAM)
         let bufferVideo = null;
         let tituloVideo = 'TikTok Video';
 
@@ -325,10 +407,14 @@ export async function manejarYouTubeMP3(sock, msgInfo, args) {
 
         await sock.sendMessage(from, { react: { text: '✨', key: m.key } });
     } catch (error) {
-        console.error('Error al descargar YouTube MP3:', error);
-        await sock.sendMessage(from, {
-            text: `(╥﹏╥) ¡Uwaa~! Ocurrió un error al intentar descargar el audio. Asegúrate de que el video no tenga restricción de edad ni sea excesivamente largo. 🌸`
-        }, { quoted: m });
+        console.error('Error al descargar YouTube MP3:', error.stderr || error.stdout || error.message || error);
+        const errStr = (error.stderr || error.stdout || error.message || '').toLowerCase();
+        let msgError = `(╥﹏╥) ¡Uwaa~! Ocurrió un error al intentar descargar el audio. Asegúrate de que el video no tenga restricción de edad ni sea excesivamente largo. 🌸`;
+        if (errStr.includes('429') || errStr.includes('bot') || errStr.includes('sign in')) {
+            msgError = `(╥﹏╥) ¡Uwaa~! YouTube requiere verificación en el servidor de Render (Error 429 / Bot).\n\n` +
+                       `💡 *Solución:* Agrega tu variable *COOKIES* en el panel de Render (Environment) para descargar cualquier canción o video sin restricciones. 🌸🎸`;
+        }
+        await sock.sendMessage(from, { text: msgError }, { quoted: m });
     }
 }
 
@@ -381,9 +467,13 @@ export async function manejarYouTubeMP4(sock, msgInfo, args) {
         await sock.sendMessage(from, { react: { text: '✨', key: m.key } });
     } catch (error) {
         console.error('❌ Error al descargar YouTube MP4:', error.stderr || error.stdout || error.message || error);
-        await sock.sendMessage(from, {
-            text: `(╥﹏╥) ¡Uwaa~! No pude descargar el video. Verifica que no sea demasiado pesado o largo para WhatsApp. 🌸`
-        }, { quoted: m });
+        const errStr = (error.stderr || error.stdout || error.message || '').toLowerCase();
+        let msgError = `(╥﹏╥) ¡Uwaa~! No pude descargar el video. Verifica que no sea demasiado pesado o largo para WhatsApp. 🌸`;
+        if (errStr.includes('429') || errStr.includes('bot') || errStr.includes('sign in')) {
+            msgError = `(╥﹏╥) ¡Uwaa~! YouTube requiere verificación en el servidor de Render (Error 429 / Bot).\n\n` +
+                       `💡 *Solución:* Agrega tu variable *COOKIES* en el panel de Render (Environment) para descargar cualquier video sin restricciones. 🌸🎬`;
+        }
+        await sock.sendMessage(from, { text: msgError }, { quoted: m });
     }
 }
 
@@ -404,22 +494,70 @@ export async function manejarInstagram(sock, msgInfo, args) {
     try {
         await sock.sendMessage(from, { react: { text: '⏳', key: m.key } });
 
-        const { rutaArchivo, titulo } = await descargarVideoYtDlp(enlace);
-        const bufferVideo = fs.readFileSync(rutaArchivo);
-        if (fs.existsSync(rutaArchivo)) fs.unlinkSync(rutaArchivo);
+        let bufferVideo = null;
+        let tituloVideo = 'Instagram Video';
+        let esFoto = false;
 
-        await sock.sendMessage(from, {
-            video: bufferVideo,
-            caption: `📸 *Instagram Reel/Video Descargado* (≧∇≦)/ ✨\n\n` +
-                     `_¡Cortesía de Yui Bot! 🍰_`
-        }, { quoted: m });
+        // 1. Intentar primero con yt-dlp (si hay cookies o acceso público directo)
+        try {
+            const { rutaArchivo, titulo } = await descargarVideoYtDlp(enlace);
+            bufferVideo = fs.readFileSync(rutaArchivo);
+            tituloVideo = titulo;
+            if (fs.existsSync(rutaArchivo)) fs.unlinkSync(rutaArchivo);
+        } catch (errYtdlp) {
+            console.warn('⚠️ yt-dlp falló para Instagram, probando scraper de respaldo:', errYtdlp.message);
+
+            // 2. Intentar con cakkatrok-instagram-downloader
+            try {
+                const resIg = await Instagram(enlace);
+                if (resIg && resIg.media && resIg.media.length > 0) {
+                    const videoItem = resIg.media.find(item => item.type === 'video') || resIg.media[0];
+                    if (videoItem && videoItem.url) {
+                        const dlRes = await fetch(videoItem.url, {
+                            headers: { 'User-Agent': 'Mozilla/5.0' },
+                            signal: AbortSignal.timeout(15000)
+                        });
+                        if (dlRes.ok) {
+                            bufferVideo = Buffer.from(await dlRes.arrayBuffer());
+                            tituloVideo = videoItem.filename || 'Instagram Media';
+                            esFoto = videoItem.type === 'photo';
+                        }
+                    }
+                }
+            } catch (errCak) {
+                console.warn('⚠️ Falló scraper de Instagram:', errCak.message);
+            }
+
+            if (!bufferVideo) {
+                throw errYtdlp;
+            }
+        }
+
+        if (esFoto) {
+            await sock.sendMessage(from, {
+                image: bufferVideo,
+                caption: `📸 *Foto de Instagram Descargada* (≧∇≦)/ ✨\n\n_¡Cortesía de Yui Bot! 🍰_`
+            }, { quoted: m });
+        } else {
+            await sock.sendMessage(from, {
+                video: bufferVideo,
+                caption: `📸 *Instagram Reel/Video Descargado* (≧∇≦)/ ✨\n\n_¡Cortesía de Yui Bot! 🍰_`
+            }, { quoted: m });
+        }
 
         await sock.sendMessage(from, { react: { text: '✨', key: m.key } });
     } catch (error) {
         console.error('❌ Error al descargar de Instagram:', error.stderr || error.stdout || error.message || error);
-        await sock.sendMessage(from, {
-            text: `(╥﹏╥) ¡Uwaa~! No pude descargar ese video de Instagram. Asegúrate de que sea un post o reel público. 🌸`
-        }, { quoted: m });
+
+        const errStr = (error.stderr || error.stdout || error.message || '').toLowerCase();
+        let mensajeError = `(╥﹏╥) ¡Uwaa~! No pude descargar ese video de Instagram. Asegúrate de que sea un post o reel público. 🌸`;
+
+        if (errStr.includes('cookies') || errStr.includes('login') || errStr.includes('not granting access') || errStr.includes('empty media')) {
+            mensajeError = `(╥﹏╥) ¡Uwaa~! Instagram bloqueó el acceso desde el servidor de Render.\n\n` +
+                           `💡 *Para solucionarlo:* Agrega tus cookies en el panel de Render (Environment -> variable *COOKIES*) para permitir descargas directas de Instagram y YouTube sin bloqueos. 🌸`;
+        }
+
+        await sock.sendMessage(from, { text: mensajeError }, { quoted: m });
     }
 }
 
