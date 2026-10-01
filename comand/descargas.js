@@ -67,7 +67,7 @@ async function descargarAudioYtDlp(url) {
     const argsComunes = [
         '--no-playlist',
         '--js-runtimes', 'node',
-        '--extractor-args', 'youtube:player_client=android,web'
+        '--extractor-args', 'youtube:player_client=tv_downgraded,android,web'
     ];
 
     if (binFfmpeg && binFfmpeg !== 'ffmpeg' && fs.existsSync(binFfmpeg)) {
@@ -118,7 +118,7 @@ async function descargarVideoYtDlp(url) {
     const argsComunes = [
         '--no-playlist',
         '--js-runtimes', 'node',
-        '--extractor-args', 'youtube:player_client=android,web'
+        '--extractor-args', 'youtube:player_client=tv_downgraded,android,web'
     ];
 
     if (binFfmpeg && binFfmpeg !== 'ffmpeg' && fs.existsSync(binFfmpeg)) {
@@ -137,18 +137,43 @@ async function descargarVideoYtDlp(url) {
 
     await execFileAsync(binYtdlp, [
         ...argsComunes,
-        '-f', 'bv*[height<=720]+ba/b[height<=720]/b',
-        '--recode-video', 'mp4',
+        '-f', 'bv*[height<=720]+ba/b[height<=720]/best',
+        '--merge-output-format', 'mp4',
         '--max-filesize', '60M',
         '-o', `${plantillaSalida}.%(ext)s`,
         url
     ]);
 
-    if (!fs.existsSync(rutaMp4)) {
+    // Buscar cualquier archivo generado con la plantilla de salida
+    const dirTmp = os.tmpdir();
+    const basePlantilla = path.basename(plantillaSalida);
+    const archivos = fs.readdirSync(dirTmp).filter(f => f.startsWith(basePlantilla));
+
+    if (archivos.length === 0) {
         throw new Error('No se generó el archivo de video MP4.');
     }
 
-    return { rutaArchivo: rutaMp4, titulo };
+    const archivoEncontrado = path.join(dirTmp, archivos[0]);
+
+    if (archivoEncontrado.endsWith('.mp4')) {
+        return { rutaArchivo: archivoEncontrado, titulo };
+    }
+
+    // Si terminó en otro contenedor (ej. mkv o webm), convertir a mp4 rápidamente sin recodificar
+    try {
+        await execFileAsync(binFfmpeg, [
+            '-y',
+            '-i', archivoEncontrado,
+            '-c', 'copy',
+            rutaMp4
+        ]);
+        if (fs.existsSync(archivoEncontrado) && archivoEncontrado !== rutaMp4) {
+            fs.unlinkSync(archivoEncontrado);
+        }
+        return { rutaArchivo: rutaMp4, titulo };
+    } catch (_) {
+        return { rutaArchivo: archivoEncontrado, titulo };
+    }
 }
 
 /**
@@ -311,7 +336,7 @@ export async function manejarYouTubeMP4(sock, msgInfo, args) {
 
         await sock.sendMessage(from, { react: { text: '✨', key: m.key } });
     } catch (error) {
-        console.error('Error al descargar YouTube MP4:', error);
+        console.error('❌ Error al descargar YouTube MP4:', error.stderr || error.stdout || error.message || error);
         await sock.sendMessage(from, {
             text: `(╥﹏╥) ¡Uwaa~! No pude descargar el video. Verifica que no sea demasiado pesado o largo para WhatsApp. 🌸`
         }, { quoted: m });
@@ -347,9 +372,111 @@ export async function manejarInstagram(sock, msgInfo, args) {
 
         await sock.sendMessage(from, { react: { text: '✨', key: m.key } });
     } catch (error) {
-        console.error('Error al descargar de Instagram:', error);
+        console.error('❌ Error al descargar de Instagram:', error.stderr || error.stdout || error.message || error);
         await sock.sendMessage(from, {
             text: `(╥﹏╥) ¡Uwaa~! No pude descargar ese video de Instagram. Asegúrate de que sea un post o reel público. 🌸`
+        }, { quoted: m });
+    }
+}
+
+/**
+ * Busca imágenes en Pinterest a través de múltiples APIs de respaldo
+ * @param {string} query 
+ * @returns {Promise<Array<string>>}
+ */
+export async function buscarPinterest(query) {
+    // 1. Intentar con api.dorratz.com
+    try {
+        const url = 'https://api.dorratz.com/v2/pinterest?q=' + encodeURIComponent(query);
+        const res = await fetch(url, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+            signal: AbortSignal.timeout(8000)
+        });
+        if (res.ok) {
+            const data = await res.json();
+            const items = data.data?.results || [];
+            const urls = items.map(i => i.image_large_url || i.image_medium_url).filter(Boolean);
+            if (urls.length > 0) return urls;
+        }
+    } catch (err) {
+        console.warn('⚠️ Error en proveedor 1 de Pinterest:', err.message);
+    }
+
+    // 2. Intentar con api.siputzx.my.id
+    try {
+        const url = 'https://api.siputzx.my.id/api/s/pinterest?query=' + encodeURIComponent(query);
+        const res = await fetch(url, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+            signal: AbortSignal.timeout(8000)
+        });
+        if (res.ok) {
+            const data = await res.json();
+            const items = data.data || [];
+            const urls = items.map(i => i.image_url).filter(Boolean);
+            if (urls.length > 0) return urls;
+        }
+    } catch (err) {
+        console.warn('⚠️ Error en proveedor 2 de Pinterest:', err.message);
+    }
+
+    return [];
+}
+
+/**
+ * Maneja el comando para buscar y enviar imágenes de Pinterest: -pin o -pinterest
+ * @param {object} sock - Instancia de Baileys
+ * @param {object} msgInfo - Información del mensaje
+ * @param {Array<string>} args - Argumentos de búsqueda
+ */
+export async function manejarPinterest(sock, msgInfo, args) {
+    const { m, from } = msgInfo;
+    const query = args.join(' ').trim();
+
+    if (!query) {
+        return await sock.sendMessage(from, {
+            text: `(•́ω•̀)? ¡Uwaaa! ¿Qué imagen quieres buscar en Pinterest?\n` +
+                  `👉 *Ejemplo:* *-pin Yui Hirasawa anime*\n` +
+                  `👉 *Ejemplo:* *-pin fondos aesthetic* 📌✨`
+        }, { quoted: m });
+    }
+
+    try {
+        await sock.sendMessage(from, { react: { text: '🔍', key: m.key } });
+
+        const resultados = await buscarPinterest(query);
+
+        if (!resultados || resultados.length === 0) {
+            return await sock.sendMessage(from, {
+                text: `(╥﹏╥) ¡Uwaa~! No pude encontrar imágenes para "*${query}*" en Pinterest. Intenta con otras palabras. 🌸`
+            }, { quoted: m });
+        }
+
+        // Seleccionar una imagen aleatoria entre las primeras encontradas para variar
+        const seleccion = resultados[Math.floor(Math.random() * Math.min(resultados.length, 10))];
+
+        await sock.sendMessage(from, { react: { text: '⏳', key: m.key } });
+
+        const resImg = await fetch(seleccion, {
+            headers: { 'User-Agent': 'Mozilla/5.0' },
+            signal: AbortSignal.timeout(10000)
+        });
+
+        if (!resImg.ok) throw new Error(`HTTP ${resImg.status} al descargar imagen de Pinterest`);
+
+        const bufferImg = Buffer.from(await resImg.arrayBuffer());
+
+        await sock.sendMessage(from, {
+            image: bufferImg,
+            caption: `📌 *Pinterest:* _${query}_\n` +
+                     `🍰 *¡Aquí tienes lo que encontré!* (≧∇≦)/ ✨\n\n` +
+                     `_¡Buscado con Yui Bot! 🌸_`
+        }, { quoted: m });
+
+        await sock.sendMessage(from, { react: { text: '✨', key: m.key } });
+    } catch (error) {
+        console.error('❌ Error en comando Pinterest:', error);
+        await sock.sendMessage(from, {
+            text: `(╥﹏╥) ¡Uwaa~! Ocurrió un error al buscar en Pinterest. Inténtalo de nuevo en unos momentos. 🌸`
         }, { quoted: m });
     }
 }

@@ -18,7 +18,8 @@ import {
     manejarTikTok,
     manejarYouTubeMP3,
     manejarYouTubeMP4,
-    manejarInstagram
+    manejarInstagram,
+    manejarPinterest
 } from './descargas.js';
 import {
     registrarInteraccionGrupo,
@@ -48,7 +49,8 @@ function generarMenu(pushName) {
            ` 🎵 *${PREFIJO}ytmp3 [canción/link]* : Descarga música de YouTube en MP3.\n` +
            ` 🎬 *${PREFIJO}ytmp4 [video/link]* : Descarga videos de YouTube en MP4.\n` +
            ` 📱 *${PREFIJO}tiktok [link]* : Descarga videos de TikTok sin marca de agua.\n` +
-           ` 📸 *${PREFIJO}ig [link]* : Descarga reels o videos de Instagram.\n\n` +
+           ` 📸 *${PREFIJO}ig [link]* : Descarga reels o videos de Instagram.\n` +
+           ` 📌 *${PREFIJO}pin [búsqueda]* : Busca fotos anime o aesthetic en Pinterest.\n\n` +
            `🎨 *───「 STICKERS Y MULTIMEDIA 」───* 🎨\n` +
            ` 🖼️ *${PREFIJO}s* o *${PREFIJO}sticker* : Convierte una foto o video/gif en sticker.\n` +
            ` 📷 *${PREFIJO}img* o *${PREFIJO}imagen* : Convierte un sticker citado en foto normal.\n` +
@@ -159,6 +161,11 @@ export async function procesarMensajes(sock, chatUpdate) {
 
         if (comando === 'ig' || comando === 'instagram') {
             await manejarInstagram(sock, msgInfo, args);
+            continue;
+        }
+
+        if (comando === 'pin' || comando === 'pinterest') {
+            await manejarPinterest(sock, msgInfo, args);
             continue;
         }
 
