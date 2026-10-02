@@ -98,7 +98,7 @@ export async function manejarRoll(sock, msgInfo) {
             await sock.sendMessage(from, {
                 image: { url: waifu.imagen },
                 caption,
-                mentions
+                mentions: menciones
             }, { quoted: m });
             return;
         } catch (e) {
@@ -106,7 +106,7 @@ export async function manejarRoll(sock, msgInfo) {
         }
     }
 
-    await sock.sendMessage(from, { text: caption, mentions }, { quoted: m });
+    await sock.sendMessage(from, { text: caption, mentions: menciones }, { quoted: m });
 }
 
 /**
@@ -266,13 +266,13 @@ export async function manejarCharInfo(sock, msgInfo, args) {
             await sock.sendMessage(from, {
                 image: { url: waifu.imagen },
                 caption,
-                mentions
+                mentions: menciones
             }, { quoted: m });
             return;
         } catch (e) {}
     }
 
-    await sock.sendMessage(from, { text: caption, mentions }, { quoted: m });
+    await sock.sendMessage(from, { text: caption, mentions: menciones }, { quoted: m });
 }
 
 /**
@@ -571,7 +571,7 @@ export async function manejarHaremShop(sock, msgInfo, args) {
 
     await sock.sendMessage(from, {
         text: texto,
-        mentions
+        mentions: menciones
     }, { quoted: m });
 }
 
@@ -643,7 +643,7 @@ export async function manejarWaifusTop(sock, msgInfo, args) {
 
     await sock.sendMessage(from, {
         text: texto,
-        mentions
+        mentions: menciones
     }, { quoted: m });
 }
 
