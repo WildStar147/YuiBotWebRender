@@ -25,6 +25,7 @@
     "dotenv": "^18.0.3",
     "express": "^5.2.1",
     "instagram-url-direct": "^2.0.7",
+    "mongodb": "^7.7.0",
     "pino": "^9.6.0",
     "qrcode": "^1.5.4",
     "qrcode-terminal": "^0.12.0",

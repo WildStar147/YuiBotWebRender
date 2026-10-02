@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { iniciarConexion } from './coneccion.js';
 import { iniciarServidorWeb } from './servidorWeb.js';
 import { inicializarBinarios } from './binarios.js';
+import { inicializarDB } from './database.js';
 
 /**
  * Punto de entrada principal para Yui Bot WhatsApp (Render Web Service)
@@ -16,11 +17,13 @@ function imprimirBanner() {
   │                                                  │
   │   "¡Divertirse es lo más importante de todo!"     │
   │                                                  │
+  │   🪙 Sistema de Economía + 🎴 Gacha de Waifus    │
+  │                                                  │
   ╰──────────────────────────────────────────────────╯
     `);
     console.log('🚀 Iniciando servicio del bot en la nube...');
     console.log('🧠 Motor de IA de Yui listo');
-    console.log('📦 Verificando servidor web, binarios y conexión WhatsApp...');
+    console.log('📦 Verificando servidor web, base de datos y conexión WhatsApp...');
 }
 
 // Capturar errores no controlados para mantener la estabilidad del bot
@@ -32,8 +35,9 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error('⚠️ [unhandledRejection] Promesa rechazada no controlada:', reason);
 });
 
-// Inicio del Bot, Servidor Web y verificación de binarios
+// Inicio del Bot, Servidor Web, DB y verificación de binarios
 imprimirBanner();
+inicializarDB();
 iniciarServidorWeb();
 inicializarBinarios().finally(() => {
     iniciarConexion();

@@ -26,6 +26,39 @@ import {
     registrarInteraccionGrupo,
     obtenerMetricasGrupo
 } from './memoria.js';
+import {
+    manejarBalance,
+    manejarDaily,
+    manejarWork,
+    manejarCrime,
+    manejarSlut,
+    manejarSteal,
+    manejarDeposit,
+    manejarWithdraw,
+    manejarPay,
+    manejarCoinflip,
+    manejarRoulette,
+    manejarBaltop,
+    manejarEconomyInfo
+} from './economia.js';
+import {
+    manejarRoll,
+    manejarClaim,
+    manejarHarem,
+    manejarCharInfo,
+    manejarCharImage,
+    manejarGiveChar,
+    manejarGiveAllHarem,
+    manejarDeleteWaifu,
+    manejarSell,
+    manejarBuyChar,
+    manejarHaremShop,
+    manejarRemoveSale,
+    manejarWaifusTop,
+    manejarVote,
+    manejarSetClaimMsg,
+    manejarDelClaimMsg
+} from './gacha.js';
 
 // Prefijo configurado para los comandos del bot
 export const PREFIJO = '-';
@@ -69,6 +102,35 @@ function generarMenu(pushName) {
            `🌸 *───「 ACCIONES Y CARIÑO 」───* 🌸\n` +
            ` 🤗 *${PREFIJO}hug* o *${PREFIJO}abrazo [@tag]* : Da o recibe un abrazo dulce y calientito.\n` +
            ` 🐾 *${PREFIJO}pat* o *${PREFIJO}caricia [@tag]* : Mimos y caricias tiernas en la cabeza (*pat pat*).\n\n` +
+           `💰 *───「 ECONOMÍA Y BANCO 」───* 💰\n` +
+           ` 🪙 *${PREFIJO}bal* o *${PREFIJO}balance* : Ver tu dinero en mano y en banco.\n` +
+           ` 🎁 *${PREFIJO}daily* : Reclamar tu recompensa diaria con racha.\n` +
+           ` 💼 *${PREFIJO}work* o *${PREFIJO}w* : Trabajar para ganar coins honradamente.\n` +
+           ` 🥷 *${PREFIJO}crime* : Cometer crímenes de riesgo (¡cuidado con la policía!).\n` +
+           ` 💋 *${PREFIJO}slut* : Salir a conseguir propinas en la noche.\n` +
+           ` 🕵️ *${PREFIJO}robar [@tag]* : Intentar robar la wallet de un amigo.\n` +
+           ` 🏦 *${PREFIJO}dep [cantidad|all]* : Depositar dinero en el banco para protegerlo.\n` +
+           ` 🏧 *${PREFIJO}with [cantidad|all]* : Retirar dinero de tu cuenta bancaria.\n` +
+           ` 💸 *${PREFIJO}pay [@tag] [cantidad]* : Transferir dinero a otro usuario.\n` +
+           ` 🪙 *${PREFIJO}cf [cantidad] [cara/cruz]* : Doble o nada con cara o cruz.\n` +
+           ` 🎰 *${PREFIJO}rt [rojo/negro] [cantidad]* : Apostar en la ruleta del casino.\n` +
+           ` 🏆 *${PREFIJO}baltop* : Ver el ranking de usuarios más ricos.\n` +
+           ` 📊 *${PREFIJO}einfo* : Tus estadísticas completas de economía.\n\n` +
+           `🎴 *───「 GACHA Y HAREM DE WAIFUS 」───* 🎴\n` +
+           ` 🎲 *${PREFIJO}roll* o *${PREFIJO}rw* : Girar la ruleta para sacar una waifu aleatoria.\n` +
+           ` 💍 *${PREFIJO}claim* o *${PREFIJO}c* : Reclamar la waifu que acaba de salir en la ruleta.\n` +
+           ` 🌸 *${PREFIJO}harem* o *${PREFIJO}waifus* : Ver tu colección de waifus reclamadas.\n` +
+           ` ℹ️ *${PREFIJO}winfo [nombre]* : Información y valor de cualquier personaje.\n` +
+           ` 🖼️ *${PREFIJO}cimage [nombre]* : Ver imagen en alta definición de un personaje.\n` +
+           ` 🎁 *${PREFIJO}regalar [@tag] [nombre]* : Regalar un personaje de tu harem a un amigo.\n` +
+           ` 🏷️ *${PREFIJO}vender [precio] [nombre]* : Poner un personaje a la venta en la tienda.\n` +
+           ` 🛒 *${PREFIJO}tienda* o *${PREFIJO}wshop* : Ver personajes en venta por otros usuarios.\n` +
+           ` 🛍️ *${PREFIJO}comprar [nombre]* : Comprar un personaje en venta.\n` +
+           ` ↩️ *${PREFIJO}removerventa [nombre]* : Retirar tu waifu del mercado.\n` +
+           ` 🕊️ *${PREFIJO}delwaifu [nombre]* : Liberar un personaje a cambio del 50% de su valor.\n` +
+           ` 👑 *${PREFIJO}wtop* o *${PREFIJO}topwaifus* : Ranking de los mayores coleccionistas.\n` +
+           ` 💖 *${PREFIJO}votar [nombre]* : Votar por una waifu (+coins y +popularidad).\n` +
+           ` 💬 *${PREFIJO}setclaim [texto]* : Personalizar tu frase de victoria al reclamar.\n\n` +
            `⚙️ *───「 SISTEMA Y DIAGNÓSTICO 」───* ⚙️\n` +
            ` 🏓 *${PREFIJO}ping* : Medir velocidad de respuesta\n` +
            ` 📊 *${PREFIJO}info* : Estado del sistema y tiempo activo\n` +
@@ -227,6 +289,126 @@ export async function procesarMensajes(sock, chatUpdate) {
             }
 
             await manejarYui(sock, msgInfo, comando, args, datosGrupo);
+            continue;
+        }
+
+        // --- SECCIÓN ECONOMÍA ---
+        if (['bal', 'balance', 'coins'].includes(comando)) {
+            await manejarBalance(sock, msgInfo, args);
+            continue;
+        }
+        if (['daily', 'diario'].includes(comando)) {
+            await manejarDaily(sock, msgInfo);
+            continue;
+        }
+        if (['work', 'w', 'trabajar'].includes(comando)) {
+            await manejarWork(sock, msgInfo);
+            continue;
+        }
+        if (['crime', 'crimen'].includes(comando)) {
+            await manejarCrime(sock, msgInfo);
+            continue;
+        }
+        if (['slut'].includes(comando)) {
+            await manejarSlut(sock, msgInfo);
+            continue;
+        }
+        if (['steal', 'robar', 'rob'].includes(comando)) {
+            await manejarSteal(sock, msgInfo, args);
+            continue;
+        }
+        if (['dep', 'deposit', 'depositar', 'd'].includes(comando)) {
+            await manejarDeposit(sock, msgInfo, args);
+            continue;
+        }
+        if (['with', 'withdraw', 'retirar'].includes(comando)) {
+            await manejarWithdraw(sock, msgInfo, args);
+            continue;
+        }
+        if (['pay', 'givecoins', 'coinsgive'].includes(comando)) {
+            await manejarPay(sock, msgInfo, args);
+            continue;
+        }
+        if (['coinflip', 'flip', 'cf'].includes(comando)) {
+            await manejarCoinflip(sock, msgInfo, args);
+            continue;
+        }
+        if (['roulette', 'rt', 'ruleta'].includes(comando)) {
+            await manejarRoulette(sock, msgInfo, args);
+            continue;
+        }
+        if (['baltop', 'economyboard', 'eboard'].includes(comando)) {
+            await manejarBaltop(sock, msgInfo, args);
+            continue;
+        }
+        if (['economyinfo', 'einfo'].includes(comando)) {
+            await manejarEconomyInfo(sock, msgInfo);
+            continue;
+        }
+
+        // --- SECCIÓN GACHA Y HAREM ---
+        if (['roll', 'rw', 'rollwaifu', 'waifu'].includes(comando)) {
+            await manejarRoll(sock, msgInfo);
+            continue;
+        }
+        if (['claim', 'c', 'reclamar'].includes(comando)) {
+            await manejarClaim(sock, msgInfo, args);
+            continue;
+        }
+        if (['harem', 'waifus', 'claims', 'miswaifus'].includes(comando)) {
+            await manejarHarem(sock, msgInfo, args);
+            continue;
+        }
+        if (['charinfo', 'winfo', 'waifuinfo'].includes(comando)) {
+            await manejarCharInfo(sock, msgInfo, args);
+            continue;
+        }
+        if (['charimage', 'waifuimage', 'cimage', 'wimage'].includes(comando)) {
+            await manejarCharImage(sock, msgInfo, args);
+            continue;
+        }
+        if (['givechar', 'givewaifu', 'regalar'].includes(comando)) {
+            await manejarGiveChar(sock, msgInfo, args);
+            continue;
+        }
+        if (['giveallharem'].includes(comando)) {
+            await manejarGiveAllHarem(sock, msgInfo, args);
+            continue;
+        }
+        if (['deletewaifu', 'delwaifu', 'delchar'].includes(comando)) {
+            await manejarDeleteWaifu(sock, msgInfo, args);
+            continue;
+        }
+        if (['sell', 'vender'].includes(comando)) {
+            await manejarSell(sock, msgInfo, args);
+            continue;
+        }
+        if (['buycharacter', 'buychar', 'buyc', 'comprar'].includes(comando)) {
+            await manejarBuyChar(sock, msgInfo, args);
+            continue;
+        }
+        if (['haremshop', 'tiendawaifus', 'wshop', 'tienda'].includes(comando)) {
+            await manejarHaremShop(sock, msgInfo, args);
+            continue;
+        }
+        if (['removesale', 'removerventa'].includes(comando)) {
+            await manejarRemoveSale(sock, msgInfo, args);
+            continue;
+        }
+        if (['topwaifus', 'waifusboard', 'wtop'].includes(comando)) {
+            await manejarWaifusTop(sock, msgInfo, args);
+            continue;
+        }
+        if (['vote', 'votar'].includes(comando)) {
+            await manejarVote(sock, msgInfo, args);
+            continue;
+        }
+        if (['setclaimmsg', 'setclaim'].includes(comando)) {
+            await manejarSetClaimMsg(sock, msgInfo, args);
+            continue;
+        }
+        if (['delclaimmsg'].includes(comando)) {
+            await manejarDelClaimMsg(sock, msgInfo);
             continue;
         }
 
