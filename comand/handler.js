@@ -47,14 +47,12 @@ function generarMenu(pushName) {
            `    _Ejemplo: ${PREFIJO}yui Ayúdame con mi tarea o cuéntame una historia_\n` +
            ` 🧹 *${PREFIJO}yui olvidar* : Reinicia la memoria de la conversación.\n\n` +
            `📥 *───「 DESCARGAS MULTIMEDIA 」───* 📥\n` +
-           ` 🎵 *${PREFIJO}ytmp3 [canción/link]* : Descarga música de YouTube en MP3.\n` +
-           ` 🎬 *${PREFIJO}ytmp4 [video/link]* : Descarga videos de YouTube en MP4.\n` +
            ` 📱 *${PREFIJO}tiktok [link]* : Descarga videos de TikTok sin marca de agua.\n` +
            ` 📸 *${PREFIJO}ig [link]* : Descarga reels o videos de Instagram.\n` +
            ` 📌 *${PREFIJO}pin [búsqueda]* : Busca fotos anime o aesthetic en Pinterest.\n\n` +
            `🎨 *───「 STICKERS Y MULTIMEDIA 」───* 🎨\n` +
            ` 🖼️ *${PREFIJO}s* o *${PREFIJO}sticker* : Convierte una foto o video/gif en sticker.\n` +
-           ` 💚 *${PREFIJO}brat [texto]* : Crea stickers estilo álbum brat (Charli XCX).\n` +
+           ` 🤍 *${PREFIJO}brat [texto]* : Crea stickers estilo álbum brat (fondo blanco, texto borroso).\n` +
            ` 📷 *${PREFIJO}img* o *${PREFIJO}imagen* : Convierte un sticker citado en foto normal.\n` +
            ` 🎞️ *${PREFIJO}gif* : Convierte un sticker animado o video a GIF.\n` +
            ` 🔓 *${PREFIJO}reveal* : Descubre fotos o videos de "ver una sola vez".\n\n` +
@@ -69,8 +67,8 @@ function generarMenu(pushName) {
            `🤣 *───「 GENERADOR DE MEMES 」───* 🤣\n` +
            ` 🎭 *${PREFIJO}meme [arriba] | [abajo]* : Añade texto a una foto citada.\n\n` +
            `🌸 *───「 ACCIONES Y CARIÑO 」───* 🌸\n` +
-           ` 🤗 *${PREFIJO}hug* : Recibe un abrazo calientito de Yui\n` +
-           ` ✨ *${PREFIJO}pat* : Caricias y ánimos en la cabecita\n\n` +
+           ` 🤗 *${PREFIJO}hug* o *${PREFIJO}abrazo [@tag]* : Da o recibe un abrazo dulce y calientito.\n` +
+           ` 🐾 *${PREFIJO}pat* o *${PREFIJO}caricia [@tag]* : Mimos y caricias tiernas en la cabeza (*pat pat*).\n\n` +
            `⚙️ *───「 SISTEMA Y DIAGNÓSTICO 」───* ⚙️\n` +
            ` 🏓 *${PREFIJO}ping* : Medir velocidad de respuesta\n` +
            ` 📊 *${PREFIJO}info* : Estado del sistema y tiempo activo\n` +

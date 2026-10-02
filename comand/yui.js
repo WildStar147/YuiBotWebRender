@@ -276,5 +276,112 @@ export async function manejarYui(sock, msgInfo, comando, args, datosGrupo = null
                 text: `(╥﹏╥) ¡Uwaa~! Me dio un pequeño tropiezo con los cables de Giita... Intenta preguntarme de nuevo en un momento. 🌸🎸`
             }, { quoted: msgInfo.m });
         }
+        return;
+    }
+
+    // --- COMANDOS DE AFECTO: HUG / ABRAZO ---
+    if (comando === 'hug' || comando === 'abrazo') {
+        const quotedParticipant = msgInfo.m.message?.extendedTextMessage?.contextInfo?.participant;
+        const mentionedJids = msgInfo.m.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+        const targetJid = quotedParticipant || (mentionedJids.length > 0 ? mentionedJids[0] : null);
+
+        // Texto personalizado si escribió algo más además de menciones
+        const mensajePersonalizado = args
+            .filter(a => !a.startsWith('@'))
+            .join(' ')
+            .trim();
+
+        await sock.sendMessage(from, { react: { text: '🫂', key: msgInfo.m.key } });
+
+        const senderJid = sender || from;
+        const senderTag = senderJid.split('@')[0];
+        const menciones = [senderJid];
+
+        let mensajeSalida = '';
+
+        if (targetJid && targetJid !== senderJid) {
+            menciones.push(targetJid);
+            const targetTag = targetJid.split('@')[0];
+
+            const frasesAbrazoGrupo = [
+                `(つ≧▽≦)つ ¡Uwaaa! @${senderTag} corre a toda velocidad hacia @${targetTag} con los brazos bien abiertos y le da un súper abrazo calientito, apretadito y lleno de amor~ 🫂💖✨\n\n_"¡No te voy a soltar nunca de lo mucho que te quiero! Ehehe~"_ 🍓🍰`,
+                `(づ｡◕‿‿◕｡)づ ¡Llegó la hora de los abrazos mágicos! @${senderTag} envuelve con infinita ternura a @${targetTag} en un abrazo suave y reconfortante como una nubecita de azúcar. ¡Que todo lo malo se desvanezca! 🌸✨🫂`,
+                `(っ´ω\`c)♡ @${senderTag} se abalanza cariñosamente sobre @${targetTag} para darle un abrazo esponjoso y protector... ¡Siente todo el calorcito del corazón y la felicidad del té de la tarde! ☕💖🎸`,
+                `(っ˘з(˘⌣˘ ) ¡Awww qué ternura~! @${senderTag} le da a @${targetTag} un abrazo tierno, cálido y lleno de paz, recordándole que siempre estará ahí para cuidarle y sacarle una sonrisa. 🫂✨🌸`
+            ];
+
+            mensajeSalida = frasesAbrazoGrupo[Math.floor(Math.random() * frasesAbrazoGrupo.length)];
+        } else {
+            // Abrazo directamente con Yui
+            const frasesAbrazoYui = [
+                `(つ≧▽≦)つ ¡Aaaaaah, @${senderTag}! ¡Yo también quería darte un abrazo gigante! *Yui suelta a Giita por un segundo, corre hacia ti y se cuelga de tu cuello en un abrazo súper apretado, frotando su mejilla contra la tuya con una gran sonrisa.* ¡Hueles a galletitas y felicidad! ¡Nunca te sientas sol@, aquí estoy siempre para ti! Ehehe~ 🫂💖🍓🎸`,
+                `(づ｡◕‿‿◕｡)づ *Abre sus bracitos y te rodea con todo el cariño del mundo.* ¡Ven aquí, @${senderTag}! Te doy un abrazo esponjoso, calientito y reconfortante. Si tuviste un día cansado, apoya tu cabecita aquí mientras tomamos té y comemos pastel juntos. ¡Eres una personita muy especial! (≧∇≦)/ 🍰☕✨`,
+                `(っ´ω\`c)♡ *Yui te abraza con todas sus fuerzas y no te deja ir.* ¡Mmmm~! ¡Qué calientito se siente abrazarte, @${senderTag}! Me llenas el corazoncito de alegría y paz. ¡Prometo tocarte una canción hermosa en la guitarra para alegrarte el día! 🎸💖🌸`
+            ];
+
+            mensajeSalida = frasesAbrazoYui[Math.floor(Math.random() * frasesAbrazoYui.length)];
+        }
+
+        if (mensajePersonalizado) {
+            mensajeSalida += `\n\n💌 *Mensaje especial:* _"${mensajePersonalizado}"_ ✨`;
+        }
+
+        return await sock.sendMessage(from, {
+            text: mensajeSalida,
+            mentions: menciones
+        }, { quoted: msgInfo.m });
+    }
+
+    // --- COMANDOS DE AFECTO: PAT / CARICIA ---
+    if (comando === 'pat' || comando === 'caricia') {
+        const quotedParticipant = msgInfo.m.message?.extendedTextMessage?.contextInfo?.participant;
+        const mentionedJids = msgInfo.m.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+        const targetJid = quotedParticipant || (mentionedJids.length > 0 ? mentionedJids[0] : null);
+
+        // Texto personalizado si escribió algo más además de menciones
+        const mensajePersonalizado = args
+            .filter(a => !a.startsWith('@'))
+            .join(' ')
+            .trim();
+
+        await sock.sendMessage(from, { react: { text: '🐾', key: msgInfo.m.key } });
+
+        const senderJid = sender || from;
+        const senderTag = senderJid.split('@')[0];
+        const menciones = [senderJid];
+
+        let mensajeSalida = '';
+
+        if (targetJid && targetJid !== senderJid) {
+            menciones.push(targetJid);
+            const targetTag = targetJid.split('@')[0];
+
+            const frasesPatGrupo = [
+                `(੭ु´･ω･\`)੭ु⁾⁾ @${senderTag} se acerca de puntitas hacia @${targetTag} y con muchísimo cariño y delicadeza le acaricia suavemente la cabecita... *pat pat pat* ¡Lo estás haciendo increíble hoy! Eres un orgullo. 🐾💖🌸✨`,
+                `(っ´ω\`c)♡ @${senderTag} mima con todo el amor del mundo a @${targetTag} haciéndole tiernas caricias en su cabello... *pat pat* ¡Todo va a estar bien! Te mereces un descanso y mucho amor. 🍓✨🍰`,
+                `( ´ ▽ \` )ﾉ @${senderTag} le da palmaditas cariñosas y dulces en la cabeza a @${targetTag} con una sonrisa resplandeciente: *pat pat* ¡Eres una personita maravillosa y muy valiosa! 💖🐾✨`,
+                `(*＾▽＾)／ @${senderTag} peina suavemente el cabello de @${targetTag} mientras le da mimos tiernos en la cabecita: *pat pat pat* ¡Una dosis diaria de cariño para alegrar tu corazón! 🌸💫`
+            ];
+
+            mensajeSalida = frasesPatGrupo[Math.floor(Math.random() * frasesPatGrupo.length)];
+        } else {
+            // Mimos directamente con Yui
+            const frasesPatYui = [
+                `(っ´ω\`c)♡ *Yui cierra los ojitos y se sonroja tiernamente mientras siente tus caricias en su cabello...* ¡Aaaaaah~! ¡Se siente tan rico y relajante, @${senderTag}! ¡Adoro que me hagas pat pat! *se acurruca feliz a tu lado como un gatito mimoso* ¡Muchas gracias por consentirme tanto! Ehehe~ (◕‿◕)🌸💖✨`,
+                `(੭ु´･ω･\`)੭ु⁾⁾ ¡Uwaaa, @${senderTag}! *Yui da un saltito feliz y extiende su manita para acariciarte la cabeza con ternura maternal y dulce:* *pat pat pat* ¡Buen trabajo hoy, personita linda! Descansa tu mente, respira profundo y recuerda que te ganaste una rebanada gigante de pastel de fresas. ¡Lo hiciste genial! 🍰🍓💖`,
+                `( ´ ▽ \` )ﾉ *Yui sonríe con los ojos iluminados:* ¡Kyaaa~! ¡Nadie me da mimos con tanto amor como tú, @${senderTag}! *te devuelve las caricias en la cabecita* ¡*pat pat* para los dos! ¡Vamos a practicar con Giita y a pasar un día maravilloso juntos! 🎸🐾🌸✨`
+            ];
+
+            mensajeSalida = frasesPatYui[Math.floor(Math.random() * frasesPatYui.length)];
+        }
+
+        if (mensajePersonalizado) {
+            mensajeSalida += `\n\n💌 *Mensaje especial:* _"${mensajePersonalizado}"_ ✨`;
+        }
+
+        return await sock.sendMessage(from, {
+            text: mensajeSalida,
+            mentions: menciones
+        }, { quoted: msgInfo.m });
     }
 }

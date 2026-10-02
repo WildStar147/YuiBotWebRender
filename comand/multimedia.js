@@ -565,7 +565,7 @@ export async function manejarFiltroAudio(sock, msgInfo, efecto) {
 }
 
 /**
- * Maneja la creación de stickers estilo álbum "brat" de Charli XCX: -brat [texto]
+ * Maneja la creación de stickers estilo álbum "brat" (fondo blanco, texto negro borroso alineado a la izquierda): -brat [texto]
  */
 export async function manejarBrat(sock, msgInfo, args) {
     const { m, from } = msgInfo;
@@ -574,8 +574,8 @@ export async function manejarBrat(sock, msgInfo, args) {
     if (!texto) {
         return await sock.sendMessage(from, {
             text: `(•́ω•̀)? ¡Uwaaa! Para crear un sticker estilo *brat* escribe tu texto.\n` +
-                  `👉 *Ejemplo:* *-brat yui hirasawa* 💚✨\n` +
-                  `👉 *Ejemplo:* *-brat tea and cakes* 💚🍰`
+                  `👉 *Ejemplo:* *-brat yui hirasawa* 🤍✨\n` +
+                  `👉 *Ejemplo:* *-brat tea and cakes* 🤍🍰`
         }, { quoted: m });
     }
 
@@ -595,45 +595,79 @@ export async function manejarBrat(sock, msgInfo, args) {
             });
         };
 
-        // Envolver palabras automáticamente para mantener proporción centrada
-        const palabras = texto.trim().split(/\s+/);
-        const lineas = [];
-        let lineaActual = '';
-        for (const w of palabras) {
-            if ((lineaActual + ' ' + w).trim().length <= 13) {
-                lineaActual = (lineaActual + ' ' + w).trim();
-            } else {
-                if (lineaActual) lineas.push(lineaActual);
-                lineaActual = w;
+        const W = 512;
+        const H = 512;
+        const marginX = 26; // margen fino a la izquierda
+        const maxW = W - (marginX * 2); // 460px
+        const marginY = 28;
+        const maxH = H - (marginY * 2); // 456px
+
+        const palabras = texto.trim().toLowerCase().split(/\s+/);
+        let mejor = null;
+        let mejorArea = 0;
+
+        const maxLineasPosibles = Math.min(palabras.length, 8);
+
+        for (let numL = 1; numL <= maxLineasPosibles; numL++) {
+            const lineas = [];
+            let cur = '';
+            for (let i = 0; i < palabras.length; i++) {
+                const w = palabras[i];
+                const restantesPalabras = palabras.length - i;
+                const restantesLineas = numL - lineas.length;
+
+                if (lineas.length < numL - 1 && restantesPalabras <= restantesLineas) {
+                    if (cur) lineas.push(cur);
+                    cur = w;
+                } else if (!cur) {
+                    cur = w;
+                } else if ((cur + ' ' + w).length <= Math.ceil(texto.length / numL) + 2) {
+                    cur += ' ' + w;
+                } else {
+                    lineas.push(cur);
+                    cur = w;
+                }
+            }
+            if (cur) lineas.push(cur);
+
+            const realNumL = lineas.length;
+            const maxChars = Math.max(...lineas.map(l => l.length));
+
+            const fontPorAncho = Math.floor(maxW / (maxChars * 0.54));
+            const fontPorAlto = Math.floor(maxH / (realNumL * 1.05));
+            const font = Math.min(fontPorAncho, fontPorAlto);
+
+            const anchoOcupado = maxChars * 0.54 * font;
+            const altoOcupado = realNumL * 1.05 * font;
+            const area = anchoOcupado * altoOcupado;
+
+            if (!mejor || area > mejorArea) {
+                mejorArea = area;
+                mejor = { lineas, font, numL: realNumL, maxChars };
             }
         }
-        if (lineaActual) lineas.push(lineaActual);
 
-        const numLineas = Math.max(1, lineas.length);
-        const maxLen = Math.max(...lineas.map(l => l.length));
+        const { lineas, font, numL } = mejor;
+        const fontSize = Math.max(28, Math.min(230, font));
+        const lineHeight = Math.round(fontSize * 1.05);
+        const totalH = (numL - 1) * lineHeight + fontSize;
+        const startY = Math.round((H - totalH) / 2 + fontSize * 0.85);
 
-        // Ajustar tamaño de fuente según cantidad de líneas y longitud máxima
-        let fontSize = 72;
-        if (numLineas >= 4 || maxLen > 13) fontSize = 42;
-        else if (numLineas === 3 || maxLen > 10) fontSize = 52;
-        else if (numLineas === 2 || maxLen > 7) fontSize = 62;
-
-        const lineHeight = fontSize * 1.15;
-        const startY = 256 - ((numLineas - 1) * lineHeight) / 2;
-
-        const tspans = lineas.map((l, i) => 
-            `<tspan x="256" y="${Math.round(startY + i * lineHeight)}">${escapeXml(l.toLowerCase())}</tspan>`
+        const tspans = lineas.map((l, i) =>
+            `<tspan x="${marginX}" y="${Math.round(startY + (i * lineHeight))}">${escapeXml(l)}</tspan>`
         ).join('');
 
+        const blurAmount = Math.max(2.0, Math.min(4.5, fontSize * 0.024)).toFixed(2);
+
         const svg = `
-        <svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+        <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
             <defs>
-                <filter id="bratBlur" x="-10%" y="-10%" width="120%" height="120%">
-                    <feGaussianBlur stdDeviation="0.45" />
+                <filter id="bratBlur" x="-30%" y="-30%" width="160%" height="160%">
+                    <feGaussianBlur stdDeviation="${blurAmount}" />
                 </filter>
             </defs>
-            <rect width="512" height="512" fill="#8ACE00"/>
-            <text font-family="Arial, Helvetica, sans-serif" font-size="${fontSize}px" font-weight="400" fill="#000000" text-anchor="middle" letter-spacing="-1.5px" filter="url(#bratBlur)">
+            <rect width="${W}" height="${H}" fill="#FFFFFF"/>
+            <text x="${marginX}" font-family="Arial, Helvetica, sans-serif" font-size="${fontSize}px" font-weight="400" fill="#000000" text-anchor="start" letter-spacing="-1.5px" filter="url(#bratBlur)">
                 ${tspans}
             </text>
         </svg>
@@ -644,7 +678,7 @@ export async function manejarBrat(sock, msgInfo, args) {
             .toBuffer();
 
         await sock.sendMessage(from, { sticker: bufferSticker }, { quoted: m });
-        await sock.sendMessage(from, { react: { text: '💚', key: m.key } });
+        await sock.sendMessage(from, { react: { text: '🤍', key: m.key } });
     } catch (error) {
         console.error('Error al generar sticker brat:', error);
         await sock.sendMessage(from, {
