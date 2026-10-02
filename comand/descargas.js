@@ -112,6 +112,28 @@ async function descargarTikTokDirecto(url) {
 }
 
 /**
+ * Copia cualquier archivo de cookies a un destino temporal escribible (/tmp)
+ * Esto es INDISPENSABLE en Render porque /etc/secrets es de solo lectura y yt-dlp
+ * intenta guardar cookies al salir (lo que provocaba OSError Errno 30 Read-only file system).
+ * @param {string} rutaOrigen 
+ * @returns {string}
+ */
+function asegurarCookiesEscribibles(rutaOrigen) {
+    if (!rutaOrigen) return null;
+    try {
+        const rutaTmp = path.join(os.tmpdir(), 'yui_cookies_writable.txt');
+        const contenido = fs.readFileSync(rutaOrigen, 'utf-8');
+        fs.writeFileSync(rutaTmp, contenido, 'utf-8');
+        try { fs.chmodSync(rutaTmp, 0o666); } catch (_) {}
+        console.log(`🍪 [Cookies] Archivo preparado en zona escribible: ${rutaTmp} (${contenido.length} bytes)`);
+        return rutaTmp;
+    } catch (e) {
+        console.warn('⚠️ Error al preparar cookies en zona escribible:', e.message);
+        return rutaOrigen;
+    }
+}
+
+/**
  * Obtiene la ruta a un archivo de cookies si está configurado en entorno, Secret Files de Render o localmente.
  * Permite configurar COOKIES o YOUTUBE_COOKIES en Render para bypass total de restricciones de YouTube e Instagram.
  * @returns {string|null}
@@ -138,7 +160,7 @@ export function obtenerRutaCookies() {
             }
             if (fs.existsSync(ruta) && fs.statSync(ruta).size > 10) {
                 console.log(`🍪 [Cookies] Cargadas desde variable de entorno hacia: ${ruta} (${fs.statSync(ruta).size} bytes)`);
-                return ruta;
+                return asegurarCookiesEscribibles(ruta);
             }
         } catch (e) {
             console.warn('⚠️ Error al procesar variable de entorno de cookies:', e.message);
@@ -163,7 +185,7 @@ export function obtenerRutaCookies() {
             try {
                 if (fs.statSync(r).size > 10) {
                     console.log(`🍪 [Cookies] Archivo encontrado en: ${r} (${fs.statSync(r).size} bytes)`);
-                    return r;
+                    return asegurarCookiesEscribibles(r);
                 }
             } catch (_) {}
         }
@@ -177,7 +199,7 @@ export function obtenerRutaCookies() {
                 const rutaCompleta = path.join('/etc/secrets', arch);
                 if (fs.statSync(rutaCompleta).isFile() && fs.statSync(rutaCompleta).size > 10) {
                     console.log(`🍪 [Cookies] Secret file detectado en /etc/secrets/: ${rutaCompleta} (${fs.statSync(rutaCompleta).size} bytes)`);
-                    return rutaCompleta;
+                    return asegurarCookiesEscribibles(rutaCompleta);
                 }
             }
         } catch (e) {
@@ -202,12 +224,38 @@ async function descargarAudioYtDlp(url) {
 
     const rutaCookies = obtenerRutaCookies();
     const esYouTube = url.includes('youtube.com') || url.includes('youtu.be');
+    const runtimeNode = `node:${process.execPath}`;
 
     // Definir estrategias de descarga
     const estrategias = [];
 
-    // Estrategia 1 (Prioritaria para YouTube): Clientes móviles (iOS/Android) saltándose la descarga de la página HTML
-    // Esto evita completamente el bloqueo HTTP 429 / verificación de bot en servidores como Render sin necesitar cookies
+    // Estrategia 1: Con cookies y cliente mobile-web (los clientes móviles nativos ios/android rechazan cookies en yt-dlp)
+    if (rutaCookies) {
+        estrategias.push({
+            nombre: 'con-cookies-mweb',
+            args: [
+                '--no-playlist',
+                '--cookies', rutaCookies,
+                ...(esYouTube ? ['--extractor-args', 'youtube:player_client=mweb,web'] : []),
+                '--remote-components', 'ejs:github',
+                '--js-runtimes', runtimeNode
+            ]
+        });
+
+        // Estrategia 2: Con cookies estándar
+        estrategias.push({
+            nombre: 'con-cookies-standard',
+            args: [
+                '--no-playlist',
+                '--cookies', rutaCookies,
+                '--remote-components', 'ejs:github',
+                '--js-runtimes', runtimeNode
+            ]
+        });
+    }
+
+    // Estrategia 3: Clientes móviles sin cookies (iOS / Android) saltándose la descarga de la página HTML
+    // (Bypass de 429 para cuando no hay cookies o fallan las cookies web)
     if (esYouTube) {
         estrategias.push({
             nombre: 'mobile-client-no-webpage',
@@ -215,32 +263,7 @@ async function descargarAudioYtDlp(url) {
                 '--no-playlist',
                 '--extractor-args', 'youtube:player_client=ios,android;player_skip=webpage,configs',
                 '--remote-components', 'ejs:github',
-                '--js-runtimes', 'node'
-            ]
-        });
-    }
-
-    // Estrategia 2: Con cookies (si están configuradas) y extractor móvil
-    if (rutaCookies) {
-        estrategias.push({
-            nombre: 'con-cookies-mobile',
-            args: [
-                '--no-playlist',
-                '--cookies', rutaCookies,
-                ...(esYouTube ? ['--extractor-args', 'youtube:player_client=ios,android;player_skip=webpage,configs'] : []),
-                '--remote-components', 'ejs:github',
-                '--js-runtimes', 'node'
-            ]
-        });
-
-        // Estrategia 3: Con cookies estándar
-        estrategias.push({
-            nombre: 'con-cookies-standard',
-            args: [
-                '--no-playlist',
-                '--cookies', rutaCookies,
-                '--remote-components', 'ejs:github',
-                '--js-runtimes', 'node'
+                '--js-runtimes', runtimeNode
             ]
         });
     }
@@ -251,7 +274,7 @@ async function descargarAudioYtDlp(url) {
         args: [
             '--no-playlist',
             '--remote-components', 'ejs:github',
-            '--js-runtimes', 'node'
+            '--js-runtimes', runtimeNode
         ]
     });
 
@@ -314,11 +337,37 @@ async function descargarVideoYtDlp(url) {
 
     const rutaCookies = obtenerRutaCookies();
     const esYouTube = url.includes('youtube.com') || url.includes('youtu.be');
+    const runtimeNode = `node:${process.execPath}`;
 
     // Definir estrategias de descarga
     const estrategias = [];
 
-    // Estrategia 1 (Prioritaria para YouTube): Clientes móviles sin descarga de página HTML
+    // Estrategia 1: Con cookies y cliente mobile-web
+    if (rutaCookies) {
+        estrategias.push({
+            nombre: 'con-cookies-mweb',
+            args: [
+                '--no-playlist',
+                '--cookies', rutaCookies,
+                ...(esYouTube ? ['--extractor-args', 'youtube:player_client=mweb,web'] : []),
+                '--remote-components', 'ejs:github',
+                '--js-runtimes', runtimeNode
+            ]
+        });
+
+        // Estrategia 2: Con cookies estándar
+        estrategias.push({
+            nombre: 'con-cookies-standard',
+            args: [
+                '--no-playlist',
+                '--cookies', rutaCookies,
+                '--remote-components', 'ejs:github',
+                '--js-runtimes', runtimeNode
+            ]
+        });
+    }
+
+    // Estrategia 3: Clientes móviles sin cookies
     if (esYouTube) {
         estrategias.push({
             nombre: 'mobile-client-no-webpage',
@@ -326,32 +375,7 @@ async function descargarVideoYtDlp(url) {
                 '--no-playlist',
                 '--extractor-args', 'youtube:player_client=ios,android;player_skip=webpage,configs',
                 '--remote-components', 'ejs:github',
-                '--js-runtimes', 'node'
-            ]
-        });
-    }
-
-    // Estrategia 2: Con cookies (si están configuradas) y extractor móvil
-    if (rutaCookies) {
-        estrategias.push({
-            nombre: 'con-cookies-mobile',
-            args: [
-                '--no-playlist',
-                '--cookies', rutaCookies,
-                ...(esYouTube ? ['--extractor-args', 'youtube:player_client=ios,android;player_skip=webpage,configs'] : []),
-                '--remote-components', 'ejs:github',
-                '--js-runtimes', 'node'
-            ]
-        });
-
-        // Estrategia 3: Con cookies estándar
-        estrategias.push({
-            nombre: 'con-cookies-standard',
-            args: [
-                '--no-playlist',
-                '--cookies', rutaCookies,
-                '--remote-components', 'ejs:github',
-                '--js-runtimes', 'node'
+                '--js-runtimes', runtimeNode
             ]
         });
     }
@@ -362,7 +386,7 @@ async function descargarVideoYtDlp(url) {
         args: [
             '--no-playlist',
             '--remote-components', 'ejs:github',
-            '--js-runtimes', 'node'
+            '--js-runtimes', runtimeNode
         ]
     });
 
