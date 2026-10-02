@@ -57,7 +57,7 @@ export async function manejarRoll(sock, msgInfo) {
         }, { quoted: m });
     }
 
-    const waifu = obtenerWaifuAleatoria();
+    const waifu = await obtenerWaifuAleatoria();
     if (!waifu) {
         return await sock.sendMessage(from, { text: `(╥﹏╥) No se pudo cargar el catálogo de waifus.` }, { quoted: m });
     }
@@ -235,7 +235,7 @@ export async function manejarCharInfo(sock, msgInfo, args) {
         }, { quoted: m });
     }
 
-    const waifu = buscarWaifuPorNombre(busqueda);
+    const waifu = await buscarWaifuPorNombre(busqueda);
     if (!waifu) {
         return await sock.sendMessage(from, {
             text: `(╥﹏╥) No encontré a ningún personaje llamado "*${busqueda}*" en el catálogo.`
@@ -288,7 +288,7 @@ export async function manejarCharImage(sock, msgInfo, args) {
         }, { quoted: m });
     }
 
-    const waifu = buscarWaifuPorNombre(busqueda);
+    const waifu = await buscarWaifuPorNombre(busqueda);
     if (!waifu || !waifu.imagen) {
         return await sock.sendMessage(from, {
             text: `(╥﹏╥) No encontré la imagen de "*${busqueda}*".`
@@ -671,7 +671,7 @@ export async function manejarVote(sock, msgInfo, args) {
         }, { quoted: m });
     }
 
-    const waifu = buscarWaifuPorNombre(busqueda);
+    const waifu = await buscarWaifuPorNombre(busqueda);
     if (!waifu) {
         return await sock.sendMessage(from, {
             text: `(╥﹏╥) No encontré a "*${busqueda}*" en el catálogo.`
