@@ -137,6 +137,7 @@ export function obtenerRutaCookies() {
                 fs.writeFileSync(ruta, contenido);
             }
             if (fs.existsSync(ruta) && fs.statSync(ruta).size > 10) {
+                console.log(`🍪 [Cookies] Cargadas desde variable de entorno hacia: ${ruta} (${fs.statSync(ruta).size} bytes)`);
                 return ruta;
             }
         } catch (e) {
@@ -144,24 +145,43 @@ export function obtenerRutaCookies() {
         }
     }
 
-    // 2. Revisar archivos en disco (incluyendo Secret Files de Render en /etc/secrets/)
+    // 2. Revisar archivos en disco conocidos
     const posiblesRutas = [
+        '/etc/secrets/cookies.txt',
+        '/etc/secrets/cookies',
+        '/etc/secrets/youtube_cookies.txt',
+        '/etc/secrets/YOUTUBE_COOKIES',
         path.join(process.cwd(), 'cookies.txt'),
         path.join(__dirname, '..', 'cookies.txt'),
         path.join(os.tmpdir(), 'cookies.txt'),
         path.join(os.tmpdir(), 'yui_cookies.txt'),
-        path.join(os.tmpdir(), 'yui_yt_cookies.txt'),
-        '/etc/secrets/cookies.txt',
-        '/etc/secrets/cookies',
-        '/etc/secrets/youtube_cookies.txt',
-        '/etc/secrets/YOUTUBE_COOKIES'
+        path.join(os.tmpdir(), 'yui_yt_cookies.txt')
     ];
 
     for (const r of posiblesRutas) {
         if (fs.existsSync(r)) {
             try {
-                if (fs.statSync(r).size > 10) return r;
+                if (fs.statSync(r).size > 10) {
+                    console.log(`🍪 [Cookies] Archivo encontrado en: ${r} (${fs.statSync(r).size} bytes)`);
+                    return r;
+                }
             } catch (_) {}
+        }
+    }
+
+    // 3. Revisar cualquier archivo dentro de /etc/secrets/ (Secret Files de Render)
+    if (fs.existsSync('/etc/secrets')) {
+        try {
+            const archivos = fs.readdirSync('/etc/secrets');
+            for (const arch of archivos) {
+                const rutaCompleta = path.join('/etc/secrets', arch);
+                if (fs.statSync(rutaCompleta).isFile() && fs.statSync(rutaCompleta).size > 10) {
+                    console.log(`🍪 [Cookies] Secret file detectado en /etc/secrets/: ${rutaCompleta} (${fs.statSync(rutaCompleta).size} bytes)`);
+                    return rutaCompleta;
+                }
+            }
+        } catch (e) {
+            console.warn('⚠️ Error al escanear /etc/secrets:', e.message);
         }
     }
 
@@ -169,7 +189,7 @@ export function obtenerRutaCookies() {
 }
 
 /**
- * Descarga y extrae audio en formato MP3 usando yt-dlp y FFmpeg
+ * Descarga y extrae audio en formato MP3 usando yt-dlp y FFmpeg con estrategias de fallback
  * @param {string} url 
  * @returns {Promise<{ rutaArchivo: string, titulo: string }>}
  */
@@ -181,53 +201,90 @@ async function descargarAudioYtDlp(url) {
     const rutaMp3 = `${plantillaSalida}.mp3`;
 
     const rutaCookies = obtenerRutaCookies();
-    const argsComunes = [
-        '--no-playlist',
-        '--js-runtimes', 'node'
-    ];
-
     const esYouTube = url.includes('youtube.com') || url.includes('youtu.be');
 
+    // Definir estrategias de descarga
+    const estrategias = [];
+
+    // Estrategia 1: Con cookies (si están configuradas) y componentes remotos EJS
+    if (rutaCookies) {
+        estrategias.push({
+            nombre: 'con-cookies',
+            args: [
+                '--no-playlist',
+                '--cookies', rutaCookies,
+                '--remote-components', 'ejs:github',
+                '--js-runtimes', 'node'
+            ]
+        });
+    }
+
+    // Estrategia 2: Cliente Android (sin cookies) para YouTube
     if (esYouTube) {
-        // En YouTube, pasar --cookies hace que yt-dlp omita el cliente android ("Skipping client android since it does not support cookies")
-        // y fuerce el cliente web, el cual falla con n-challenge/signature solving en contenedores de servidor.
-        // El cliente android sin cookies descarga directamente audio y video sin 429 y sin n-challenge.
-        argsComunes.push('--extractor-args', 'youtube:player_client=android');
-    } else if (rutaCookies) {
-        argsComunes.push('--cookies', rutaCookies);
+        estrategias.push({
+            nombre: 'android-client',
+            args: [
+                '--no-playlist',
+                '--extractor-args', 'youtube:player_client=android',
+                '--remote-components', 'ejs:github',
+                '--js-runtimes', 'node'
+            ]
+        });
     }
 
-    if (binFfmpeg && binFfmpeg !== 'ffmpeg' && fs.existsSync(binFfmpeg)) {
-        argsComunes.push('--ffmpeg-location', path.dirname(binFfmpeg));
+    // Estrategia 3: Estándar por defecto
+    estrategias.push({
+        nombre: 'default',
+        args: [
+            '--no-playlist',
+            '--remote-components', 'ejs:github',
+            '--js-runtimes', 'node'
+        ]
+    });
+
+    let ultimoError = null;
+
+    for (const est of estrategias) {
+        try {
+            console.log(`🎵 Intentando descargar audio con estrategia: ${est.nombre}`);
+            const argsComunes = [...est.args];
+            if (binFfmpeg && binFfmpeg !== 'ffmpeg' && fs.existsSync(binFfmpeg)) {
+                argsComunes.push('--ffmpeg-location', path.dirname(binFfmpeg));
+            }
+
+            // Extraer título primero de forma rápida
+            let titulo = 'Audio';
+            try {
+                const { stdout } = await execFileAsync(binYtdlp, [
+                    ...argsComunes,
+                    '--print', '%(title)s',
+                    url
+                ]);
+                titulo = stdout.trim() || 'Audio';
+            } catch (_) {}
+
+            await execFileAsync(binYtdlp, [
+                ...argsComunes,
+                '-f', 'ba/b',
+                '-x',
+                '--audio-format', 'mp3',
+                '--audio-quality', '0',
+                '--max-filesize', '40M',
+                '-o', `${plantillaSalida}.%(ext)s`,
+                url
+            ]);
+
+            if (fs.existsSync(rutaMp3)) {
+                console.log(`✅ Audio descargado exitosamente con estrategia: ${est.nombre}`);
+                return { rutaArchivo: rutaMp3, titulo };
+            }
+        } catch (err) {
+            console.warn(`⚠️ Estrategia ${est.nombre} falló al descargar audio:`, err.message);
+            ultimoError = err;
+        }
     }
 
-    // Extraer título primero de forma rápida
-    let titulo = 'Audio';
-    try {
-        const { stdout } = await execFileAsync(binYtdlp, [
-            ...argsComunes,
-            '--print', '%(title)s',
-            url
-        ]);
-        titulo = stdout.trim() || 'Audio';
-    } catch (_) {}
-
-    await execFileAsync(binYtdlp, [
-        ...argsComunes,
-        '-f', 'ba/b',
-        '-x',
-        '--audio-format', 'mp3',
-        '--audio-quality', '0',
-        '--max-filesize', '40M',
-        '-o', `${plantillaSalida}.%(ext)s`,
-        url
-    ]);
-
-    if (!fs.existsSync(rutaMp3)) {
-        throw new Error('No se generó el archivo de audio MP3.');
-    }
-
-    return { rutaArchivo: rutaMp3, titulo };
+    throw ultimoError || new Error('No se generó el archivo de audio MP3.');
 }
 
 /**
@@ -243,72 +300,113 @@ async function descargarVideoYtDlp(url) {
     const rutaMp4 = `${plantillaSalida}.mp4`;
 
     const rutaCookies = obtenerRutaCookies();
-    const argsComunes = [
-        '--no-playlist',
-        '--js-runtimes', 'node'
-    ];
-
     const esYouTube = url.includes('youtube.com') || url.includes('youtu.be');
 
+    // Definir estrategias de descarga
+    const estrategias = [];
+
+    // Estrategia 1: Con cookies (si están configuradas)
+    if (rutaCookies) {
+        estrategias.push({
+            nombre: 'con-cookies',
+            args: [
+                '--no-playlist',
+                '--cookies', rutaCookies,
+                '--remote-components', 'ejs:github',
+                '--js-runtimes', 'node'
+            ]
+        });
+    }
+
+    // Estrategia 2: Cliente Android (sin cookies) para YouTube
     if (esYouTube) {
-        argsComunes.push('--extractor-args', 'youtube:player_client=android');
-    } else if (rutaCookies) {
-        argsComunes.push('--cookies', rutaCookies);
+        estrategias.push({
+            nombre: 'android-client',
+            args: [
+                '--no-playlist',
+                '--extractor-args', 'youtube:player_client=android',
+                '--remote-components', 'ejs:github',
+                '--js-runtimes', 'node'
+            ]
+        });
     }
 
-    if (binFfmpeg && binFfmpeg !== 'ffmpeg' && fs.existsSync(binFfmpeg)) {
-        argsComunes.push('--ffmpeg-location', path.dirname(binFfmpeg));
-    }
+    // Estrategia 3: Estándar por defecto
+    estrategias.push({
+        nombre: 'default',
+        args: [
+            '--no-playlist',
+            '--remote-components', 'ejs:github',
+            '--js-runtimes', 'node'
+        ]
+    });
 
-    let titulo = 'Video';
-    try {
-        const { stdout } = await execFileAsync(binYtdlp, [
-            ...argsComunes,
-            '--print', '%(title)s',
-            url
-        ]);
-        titulo = stdout.trim() || 'Video';
-    } catch (_) {}
+    let ultimoError = null;
 
-    await execFileAsync(binYtdlp, [
-        ...argsComunes,
-        '-f', 'bv*[height<=720]+ba/b[height<=720]/best',
-        '--merge-output-format', 'mp4',
-        '--max-filesize', '40M',
-        '-o', `${plantillaSalida}.%(ext)s`,
-        url
-    ]);
+    for (const est of estrategias) {
+        try {
+            console.log(`🎬 Intentando descargar video con estrategia: ${est.nombre}`);
+            const argsComunes = [...est.args];
+            if (binFfmpeg && binFfmpeg !== 'ffmpeg' && fs.existsSync(binFfmpeg)) {
+                argsComunes.push('--ffmpeg-location', path.dirname(binFfmpeg));
+            }
 
-    // Buscar cualquier archivo generado con la plantilla de salida
-    const dirTmp = os.tmpdir();
-    const basePlantilla = path.basename(plantillaSalida);
-    const archivos = fs.readdirSync(dirTmp).filter(f => f.startsWith(basePlantilla));
+            let titulo = 'Video';
+            try {
+                const { stdout } = await execFileAsync(binYtdlp, [
+                    ...argsComunes,
+                    '--print', '%(title)s',
+                    url
+                ]);
+                titulo = stdout.trim() || 'Video';
+            } catch (_) {}
 
-    if (archivos.length === 0) {
-        throw new Error('No se generó el archivo de video MP4.');
-    }
+            await execFileAsync(binYtdlp, [
+                ...argsComunes,
+                '-f', 'bv*[height<=720]+ba/b[height<=720]/best',
+                '--merge-output-format', 'mp4',
+                '--max-filesize', '40M',
+                '-o', `${plantillaSalida}.%(ext)s`,
+                url
+            ]);
 
-    const archivoEncontrado = path.join(dirTmp, archivos[0]);
+            // Buscar cualquier archivo generado con la plantilla de salida
+            const dirTmp = os.tmpdir();
+            const basePlantilla = path.basename(plantillaSalida);
+            const archivos = fs.readdirSync(dirTmp).filter(f => f.startsWith(basePlantilla));
 
-    if (archivoEncontrado.endsWith('.mp4')) {
-        return { rutaArchivo: archivoEncontrado, titulo };
-    }
+            if (archivos.length > 0) {
+                const archivoEncontrado = path.join(dirTmp, archivos[0]);
+                if (archivoEncontrado.endsWith('.mp4')) {
+                    console.log(`✅ Video descargado exitosamente con estrategia: ${est.nombre}`);
+                    return { rutaArchivo: archivoEncontrado, titulo };
+                }
 
-    // Si terminó en otro contenedor (ej. mkv o webm), convertir a mp4 rápidamente sin recodificar
-    try {
-        await execFileAsync(binFfmpeg, [
-            '-y',
-            '-i', archivoEncontrado,
-            '-c', 'copy',
-            rutaMp4
-        ]);
-        if (fs.existsSync(archivoEncontrado) && archivoEncontrado !== rutaMp4) {
-            fs.unlinkSync(archivoEncontrado);
+                // Si terminó en otro contenedor (ej. mkv o webm), convertir a mp4 rápidamente sin recodificar
+                try {
+                    await execFileAsync(binFfmpeg, [
+                        '-y',
+                        '-i', archivoEncontrado,
+                        '-c', 'copy',
+                        rutaMp4
+                    ]);
+                    if (fs.existsSync(archivoEncontrado) && archivoEncontrado !== rutaMp4) {
+                        fs.unlinkSync(archivoEncontrado);
+                    }
+                    if (fs.existsSync(rutaMp4)) {
+                        console.log(`✅ Video remuxed a MP4 exitosamente con estrategia: ${est.nombre}`);
+                        return { rutaArchivo: rutaMp4, titulo };
+                    }
+                } catch (_) {}
+                return { rutaArchivo: archivoEncontrado, titulo };
+            }
+        } catch (err) {
+            console.warn(`⚠️ Estrategia ${est.nombre} falló al descargar video:`, err.message);
+            ultimoError = err;
         }
-        return { rutaArchivo: rutaMp4, titulo };
-    } catch (_) {
-        return { rutaArchivo: archivoEncontrado, titulo };
     }
+
+    throw ultimoError || new Error('No se generó el archivo de video MP4.');
 }
 
 /**
