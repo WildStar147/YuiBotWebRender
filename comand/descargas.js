@@ -206,10 +206,36 @@ async function descargarAudioYtDlp(url) {
     // Definir estrategias de descarga
     const estrategias = [];
 
-    // Estrategia 1: Con cookies (si están configuradas) y componentes remotos EJS
+    // Estrategia 1 (Prioritaria para YouTube): Clientes móviles (iOS/Android) saltándose la descarga de la página HTML
+    // Esto evita completamente el bloqueo HTTP 429 / verificación de bot en servidores como Render sin necesitar cookies
+    if (esYouTube) {
+        estrategias.push({
+            nombre: 'mobile-client-no-webpage',
+            args: [
+                '--no-playlist',
+                '--extractor-args', 'youtube:player_client=ios,android;player_skip=webpage,configs',
+                '--remote-components', 'ejs:github',
+                '--js-runtimes', 'node'
+            ]
+        });
+    }
+
+    // Estrategia 2: Con cookies (si están configuradas) y extractor móvil
     if (rutaCookies) {
         estrategias.push({
-            nombre: 'con-cookies',
+            nombre: 'con-cookies-mobile',
+            args: [
+                '--no-playlist',
+                '--cookies', rutaCookies,
+                ...(esYouTube ? ['--extractor-args', 'youtube:player_client=ios,android;player_skip=webpage,configs'] : []),
+                '--remote-components', 'ejs:github',
+                '--js-runtimes', 'node'
+            ]
+        });
+
+        // Estrategia 3: Con cookies estándar
+        estrategias.push({
+            nombre: 'con-cookies-standard',
             args: [
                 '--no-playlist',
                 '--cookies', rutaCookies,
@@ -219,20 +245,7 @@ async function descargarAudioYtDlp(url) {
         });
     }
 
-    // Estrategia 2: Cliente Android (sin cookies) para YouTube
-    if (esYouTube) {
-        estrategias.push({
-            nombre: 'android-client',
-            args: [
-                '--no-playlist',
-                '--extractor-args', 'youtube:player_client=android',
-                '--remote-components', 'ejs:github',
-                '--js-runtimes', 'node'
-            ]
-        });
-    }
-
-    // Estrategia 3: Estándar por defecto
+    // Estrategia 4: Estándar por defecto
     estrategias.push({
         nombre: 'default',
         args: [
@@ -305,10 +318,35 @@ async function descargarVideoYtDlp(url) {
     // Definir estrategias de descarga
     const estrategias = [];
 
-    // Estrategia 1: Con cookies (si están configuradas)
+    // Estrategia 1 (Prioritaria para YouTube): Clientes móviles sin descarga de página HTML
+    if (esYouTube) {
+        estrategias.push({
+            nombre: 'mobile-client-no-webpage',
+            args: [
+                '--no-playlist',
+                '--extractor-args', 'youtube:player_client=ios,android;player_skip=webpage,configs',
+                '--remote-components', 'ejs:github',
+                '--js-runtimes', 'node'
+            ]
+        });
+    }
+
+    // Estrategia 2: Con cookies (si están configuradas) y extractor móvil
     if (rutaCookies) {
         estrategias.push({
-            nombre: 'con-cookies',
+            nombre: 'con-cookies-mobile',
+            args: [
+                '--no-playlist',
+                '--cookies', rutaCookies,
+                ...(esYouTube ? ['--extractor-args', 'youtube:player_client=ios,android;player_skip=webpage,configs'] : []),
+                '--remote-components', 'ejs:github',
+                '--js-runtimes', 'node'
+            ]
+        });
+
+        // Estrategia 3: Con cookies estándar
+        estrategias.push({
+            nombre: 'con-cookies-standard',
             args: [
                 '--no-playlist',
                 '--cookies', rutaCookies,
@@ -318,20 +356,7 @@ async function descargarVideoYtDlp(url) {
         });
     }
 
-    // Estrategia 2: Cliente Android (sin cookies) para YouTube
-    if (esYouTube) {
-        estrategias.push({
-            nombre: 'android-client',
-            args: [
-                '--no-playlist',
-                '--extractor-args', 'youtube:player_client=android',
-                '--remote-components', 'ejs:github',
-                '--js-runtimes', 'node'
-            ]
-        });
-    }
-
-    // Estrategia 3: Estándar por defecto
+    // Estrategia 4: Estándar por defecto
     estrategias.push({
         nombre: 'default',
         args: [
@@ -363,7 +388,7 @@ async function descargarVideoYtDlp(url) {
 
             await execFileAsync(binYtdlp, [
                 ...argsComunes,
-                '-f', 'bv*[height<=720]+ba/b[height<=720]/best',
+                '-f', 'b[ext=mp4][height<=720]/bv*[height<=720]+ba/b[height<=720]/best',
                 '--merge-output-format', 'mp4',
                 '--max-filesize', '40M',
                 '-o', `${plantillaSalida}.%(ext)s`,
