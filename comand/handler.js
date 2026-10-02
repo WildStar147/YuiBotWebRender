@@ -12,7 +12,8 @@ import {
     manejarStickerAGif,
     manejarReveal,
     manejarFiltroAudio,
-    manejarMeme
+    manejarMeme,
+    manejarBrat
 } from './multimedia.js';
 import {
     manejarTikTok,
@@ -53,6 +54,7 @@ function generarMenu(pushName) {
            ` 📌 *${PREFIJO}pin [búsqueda]* : Busca fotos anime o aesthetic en Pinterest.\n\n` +
            `🎨 *───「 STICKERS Y MULTIMEDIA 」───* 🎨\n` +
            ` 🖼️ *${PREFIJO}s* o *${PREFIJO}sticker* : Convierte una foto o video/gif en sticker.\n` +
+           ` 💚 *${PREFIJO}brat [texto]* : Crea stickers estilo álbum brat (Charli XCX).\n` +
            ` 📷 *${PREFIJO}img* o *${PREFIJO}imagen* : Convierte un sticker citado en foto normal.\n` +
            ` 🎞️ *${PREFIJO}gif* : Convierte un sticker animado o video a GIF.\n` +
            ` 🔓 *${PREFIJO}reveal* : Descubre fotos o videos de "ver una sola vez".\n\n` +
@@ -62,7 +64,8 @@ function generarMenu(pushName) {
            ` 🤖 *${PREFIJO}robot* : Efecto de modulación robótica.\n` +
            ` 🔊 *${PREFIJO}eco* : Efecto de cámara de eco.\n` +
            ` ⏪ *${PREFIJO}reversa* : Audio reproducido al revés.\n` +
-           ` ⏩ *${PREFIJO}rapido* : Audio a velocidad 1.5x.\n\n` +
+           ` ⏩ *${PREFIJO}rapido* : Audio a velocidad 1.5x.\n` +
+           ` 🐢 *${PREFIJO}lento* : Audio a velocidad lenta (slowed).\n\n` +
            `🤣 *───「 GENERADOR DE MEMES 」───* 🤣\n` +
            ` 🎭 *${PREFIJO}meme [arriba] | [abajo]* : Añade texto a una foto citada.\n\n` +
            `🌸 *───「 ACCIONES Y CARIÑO 」───* 🌸\n` +
@@ -190,8 +193,13 @@ export async function procesarMensajes(sock, chatUpdate) {
             continue;
         }
 
+        if (comando === 'brat') {
+            await manejarBrat(sock, msgInfo, args);
+            continue;
+        }
+
         // --- SECCIÓN EFECTOS DE AUDIO ---
-        if (['ardilla', 'grave', 'robot', 'eco', 'reversa', 'rapido'].includes(comando)) {
+        if (['ardilla', 'grave', 'robot', 'eco', 'reversa', 'rapido', 'lento'].includes(comando)) {
             await manejarFiltroAudio(sock, msgInfo, comando);
             continue;
         }

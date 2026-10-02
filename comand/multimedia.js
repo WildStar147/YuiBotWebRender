@@ -224,34 +224,94 @@ async function aplicarFiltroAudio(bufferAudio, filtroFfmpeg) {
 
 /**
  * Superpone texto superior e inferior estilo meme sobre una imagen
+ * Se ajusta dinámicamente a la resolución de la foto y divide el texto en renglones
+ * para evitar que las letras salgan muy pequeñas o se corten fuera de la imagen.
  */
 async function generarMemeConTexto(bufferImagen, textoArriba, textoAbajo) {
     const rutaEntrada = generarRutaTemporal('jpg');
     const rutaSalida = generarRutaTemporal('jpg');
+    const rutaTxtArriba = generarRutaTemporal('txt');
+    const rutaTxtAbajo = generarRutaTemporal('txt');
 
     try {
-        fs.writeFileSync(rutaEntrada, bufferImagen);
+        // 1. Obtener dimensiones de la imagen y normalizar si es gigante (previene OOM en Render)
+        let bufferProcesado = bufferImagen;
+        const meta = await sharp(bufferImagen).metadata();
+        const anchoOriginal = meta.width || 800;
+        const altoOriginal = meta.height || 600;
 
-        const filtros = [];
+        if (anchoOriginal > 1200 || altoOriginal > 1200) {
+            bufferProcesado = await sharp(bufferImagen)
+                .resize(1200, 1200, { fit: 'inside', withoutEnlargement: true })
+                .jpeg({ quality: 90 })
+                .toBuffer();
+        }
+
+        fs.writeFileSync(rutaEntrada, bufferProcesado);
+
+        const metaFinal = await sharp(bufferProcesado).metadata();
+        const w = metaFinal.width || 800;
+        const h = metaFinal.height || 600;
+
+        // Función para envolver texto automáticamente en renglones
+        const envolverTexto = (texto, maxChars = 22) => {
+            if (!texto) return [];
+            const palabras = texto.trim().split(/\s+/);
+            const lineas = [];
+            let lineaActual = '';
+            for (const p of palabras) {
+                if ((lineaActual + ' ' + p).trim().length <= maxChars) {
+                    lineaActual = (lineaActual + ' ' + p).trim();
+                } else {
+                    if (lineaActual) lineas.push(lineaActual);
+                    lineaActual = p;
+                }
+            }
+            if (lineaActual) lineas.push(lineaActual);
+            return lineas;
+        };
+
         const rutaFuente = obtenerRutaFuenteMeme();
         const fontParam = rutaFuente ? `fontfile='${rutaFuente}':` : '';
+        const filtros = [];
+
+        // Tamaño de fuente base proporcional al ancho de la imagen
+        const baseFontSize = Math.max(26, Math.min(75, Math.round(w / 18)));
+        const maxCaracteres = Math.max(16, Math.round(w / 40));
 
         if (textoArriba) {
-            const escArriba = escaparDrawtext(textoArriba.toUpperCase());
-            filtros.push(`drawtext=${fontParam}text='${escArriba}':fontcolor=white:bordercolor=black:borderw=3:fontsize=36:x=(w-text_w)/2:y=25`);
+            const lineasArriba = envolverTexto(textoArriba.toUpperCase(), maxCaracteres);
+            fs.writeFileSync(rutaTxtArriba, lineasArriba.join('\n'), 'utf-8');
+
+            const factorReduccion = lineasArriba.length > 2 ? 0.75 : 1;
+            const fontArriba = Math.max(20, Math.round(baseFontSize * factorReduccion));
+            const borderArriba = Math.max(3, Math.round(fontArriba / 9));
+            const posY = Math.max(15, Math.round(h * 0.03));
+
+            filtros.push(
+                `drawtext=${fontParam}textfile='${rutaTxtArriba}':fontcolor=white:bordercolor=black:borderw=${borderArriba}:fontsize=${fontArriba}:x=(w-text_w)/2:y=${posY}:line_spacing=6`
+            );
         }
+
         if (textoAbajo) {
-            const escAbajo = escaparDrawtext(textoAbajo.toUpperCase());
-            filtros.push(`drawtext=${fontParam}text='${escAbajo}':fontcolor=white:bordercolor=black:borderw=3:fontsize=36:x=(w-text_w)/2:y=h-text_h-25`);
+            const lineasAbajo = envolverTexto(textoAbajo.toUpperCase(), maxCaracteres);
+            fs.writeFileSync(rutaTxtAbajo, lineasAbajo.join('\n'), 'utf-8');
+
+            const factorReduccion = lineasAbajo.length > 2 ? 0.75 : 1;
+            const fontAbajo = Math.max(20, Math.round(baseFontSize * factorReduccion));
+            const borderAbajo = Math.max(3, Math.round(fontAbajo / 9));
+            const marginInferior = Math.max(15, Math.round(h * 0.03));
+
+            filtros.push(
+                `drawtext=${fontParam}textfile='${rutaTxtAbajo}':fontcolor=white:bordercolor=black:borderw=${borderAbajo}:fontsize=${fontAbajo}:x=(w-text_w)/2:y=h-text_h-${marginInferior}:line_spacing=6`
+            );
         }
 
-        const cadenaFiltros = filtros.join(',');
         const binFfmpeg = await obtenerRutaFfmpeg();
-
         await execFileAsync(binFfmpeg, [
             '-y',
             '-i', rutaEntrada,
-            '-vf', cadenaFiltros,
+            '-vf', filtros.join(','),
             rutaSalida
         ]);
 
@@ -259,6 +319,8 @@ async function generarMemeConTexto(bufferImagen, textoArriba, textoAbajo) {
     } finally {
         if (fs.existsSync(rutaEntrada)) fs.unlinkSync(rutaEntrada);
         if (fs.existsSync(rutaSalida)) fs.unlinkSync(rutaSalida);
+        if (fs.existsSync(rutaTxtArriba)) fs.unlinkSync(rutaTxtArriba);
+        if (fs.existsSync(rutaTxtAbajo)) fs.unlinkSync(rutaTxtAbajo);
     }
 }
 
@@ -474,7 +536,8 @@ export async function manejarFiltroAudio(sock, msgInfo, efecto) {
         robot: 'tremolo=f=30:d=0.8',
         eco: 'aecho=0.8:0.88:60:0.4',
         reversa: 'areverse',
-        rapido: 'atempo=1.5'
+        rapido: 'atempo=1.5',
+        lento: 'atempo=0.75'
     };
 
     const filtroFfmpeg = FILTROS[efecto];
@@ -497,6 +560,95 @@ export async function manejarFiltroAudio(sock, msgInfo, efecto) {
         console.error(`Error al aplicar filtro de audio ${efecto}:`, error);
         await sock.sendMessage(from, {
             text: `(╥﹏╥) ¡Uwaa~! Ocurrió un error al procesar el audio con el filtro *${efecto}*. 🌸`
+        }, { quoted: m });
+    }
+}
+
+/**
+ * Maneja la creación de stickers estilo álbum "brat" de Charli XCX: -brat [texto]
+ */
+export async function manejarBrat(sock, msgInfo, args) {
+    const { m, from } = msgInfo;
+    const texto = args.join(' ').trim();
+
+    if (!texto) {
+        return await sock.sendMessage(from, {
+            text: `(•́ω•̀)? ¡Uwaaa! Para crear un sticker estilo *brat* escribe tu texto.\n` +
+                  `👉 *Ejemplo:* *-brat yui hirasawa* 💚✨\n` +
+                  `👉 *Ejemplo:* *-brat tea and cakes* 💚🍰`
+        }, { quoted: m });
+    }
+
+    try {
+        await sock.sendMessage(from, { react: { text: '⏳', key: m.key } });
+
+        // Función para escapar caracteres reservados XML/SVG
+        const escapeXml = (unsafe) => {
+            return unsafe.replace(/[<>&'"]/g, (c) => {
+                switch (c) {
+                    case '<': return '&lt;';
+                    case '>': return '&gt;';
+                    case '&': return '&amp;';
+                    case '\'': return '&apos;';
+                    case '"': return '&quot;';
+                }
+            });
+        };
+
+        // Envolver palabras automáticamente para mantener proporción centrada
+        const palabras = texto.trim().split(/\s+/);
+        const lineas = [];
+        let lineaActual = '';
+        for (const w of palabras) {
+            if ((lineaActual + ' ' + w).trim().length <= 13) {
+                lineaActual = (lineaActual + ' ' + w).trim();
+            } else {
+                if (lineaActual) lineas.push(lineaActual);
+                lineaActual = w;
+            }
+        }
+        if (lineaActual) lineas.push(lineaActual);
+
+        const numLineas = Math.max(1, lineas.length);
+        const maxLen = Math.max(...lineas.map(l => l.length));
+
+        // Ajustar tamaño de fuente según cantidad de líneas y longitud máxima
+        let fontSize = 72;
+        if (numLineas >= 4 || maxLen > 13) fontSize = 42;
+        else if (numLineas === 3 || maxLen > 10) fontSize = 52;
+        else if (numLineas === 2 || maxLen > 7) fontSize = 62;
+
+        const lineHeight = fontSize * 1.15;
+        const startY = 256 - ((numLineas - 1) * lineHeight) / 2;
+
+        const tspans = lineas.map((l, i) => 
+            `<tspan x="256" y="${Math.round(startY + i * lineHeight)}">${escapeXml(l.toLowerCase())}</tspan>`
+        ).join('');
+
+        const svg = `
+        <svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+                <filter id="bratBlur" x="-10%" y="-10%" width="120%" height="120%">
+                    <feGaussianBlur stdDeviation="0.45" />
+                </filter>
+            </defs>
+            <rect width="512" height="512" fill="#8ACE00"/>
+            <text font-family="Arial, Helvetica, sans-serif" font-size="${fontSize}px" font-weight="400" fill="#000000" text-anchor="middle" letter-spacing="-1.5px" filter="url(#bratBlur)">
+                ${tspans}
+            </text>
+        </svg>
+        `;
+
+        const bufferSticker = await sharp(Buffer.from(svg))
+            .webp({ quality: 90 })
+            .toBuffer();
+
+        await sock.sendMessage(from, { sticker: bufferSticker }, { quoted: m });
+        await sock.sendMessage(from, { react: { text: '💚', key: m.key } });
+    } catch (error) {
+        console.error('Error al generar sticker brat:', error);
+        await sock.sendMessage(from, {
+            text: `(╥﹏╥) ¡Uwaa~! Ocurrió un error al crear el sticker brat. ¡Intenta de nuevo! 🌸`
         }, { quoted: m });
     }
 }
