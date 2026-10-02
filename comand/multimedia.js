@@ -3,6 +3,7 @@ import path from 'path';
 import os from 'os';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import sharp from 'sharp';
 import { downloadContentFromMessage } from '@whiskeysockets/baileys';
 import { obtenerRutaFfmpeg } from './binarios.js';
 
@@ -125,23 +126,27 @@ async function convertirVideoASticker(bufferVideo) {
  * Convierte un sticker WebP a imagen PNG estándar
  */
 async function convertirStickerAImagen(bufferSticker) {
-    const rutaEntrada = generarRutaTemporal('webp');
-    const rutaSalida = generarRutaTemporal('png');
-
     try {
-        fs.writeFileSync(rutaEntrada, bufferSticker);
+        return await sharp(bufferSticker).png().toBuffer();
+    } catch (_) {
+        const rutaEntrada = generarRutaTemporal('webp');
+        const rutaSalida = generarRutaTemporal('png');
 
-        const binFfmpeg = await obtenerRutaFfmpeg();
-        await execFileAsync(binFfmpeg, [
-            '-y',
-            '-i', rutaEntrada,
-            rutaSalida
-        ]);
+        try {
+            fs.writeFileSync(rutaEntrada, bufferSticker);
 
-        return fs.readFileSync(rutaSalida);
-    } finally {
-        if (fs.existsSync(rutaEntrada)) fs.unlinkSync(rutaEntrada);
-        if (fs.existsSync(rutaSalida)) fs.unlinkSync(rutaSalida);
+            const binFfmpeg = await obtenerRutaFfmpeg();
+            await execFileAsync(binFfmpeg, [
+                '-y',
+                '-i', rutaEntrada,
+                rutaSalida
+            ]);
+
+            return fs.readFileSync(rutaSalida);
+        } finally {
+            if (fs.existsSync(rutaEntrada)) fs.unlinkSync(rutaEntrada);
+            if (fs.existsSync(rutaSalida)) fs.unlinkSync(rutaSalida);
+        }
     }
 }
 
@@ -149,13 +154,26 @@ async function convertirStickerAImagen(bufferSticker) {
  * Convierte un sticker WebP animado o video a GIF animado de WhatsApp
  */
 async function convertirStickerAGif(bufferWebp) {
-    const rutaEntrada = generarRutaTemporal('webp');
     const rutaSalida = generarRutaTemporal('mp4');
+    let rutaEntrada = null;
+    let rutaGifIntermedio = null;
 
     try {
-        fs.writeFileSync(rutaEntrada, bufferWebp);
-
         const binFfmpeg = await obtenerRutaFfmpeg();
+
+        // 1. Intentar decodificar el WebP animado con sharp (soporta chunks ANIM y ANMF nativamente)
+        try {
+            const gifBuffer = await sharp(bufferWebp, { animated: true }).gif().toBuffer();
+            rutaGifIntermedio = generarRutaTemporal('gif');
+            fs.writeFileSync(rutaGifIntermedio, gifBuffer);
+            rutaEntrada = rutaGifIntermedio;
+        } catch (errSharp) {
+            console.warn('⚠️ sharp no pudo procesar animación directa, usando archivo directo:', errSharp.message);
+            rutaEntrada = generarRutaTemporal('webp');
+            fs.writeFileSync(rutaEntrada, bufferWebp);
+        }
+
+        // 2. Convertir a MP4 compatible con reproducción de GIF en WhatsApp
         await execFileAsync(binFfmpeg, [
             '-y',
             '-i', rutaEntrada,
@@ -169,7 +187,8 @@ async function convertirStickerAGif(bufferWebp) {
 
         return fs.readFileSync(rutaSalida);
     } finally {
-        if (fs.existsSync(rutaEntrada)) fs.unlinkSync(rutaEntrada);
+        if (rutaEntrada && fs.existsSync(rutaEntrada)) fs.unlinkSync(rutaEntrada);
+        if (rutaGifIntermedio && fs.existsSync(rutaGifIntermedio)) fs.unlinkSync(rutaGifIntermedio);
         if (fs.existsSync(rutaSalida)) fs.unlinkSync(rutaSalida);
     }
 }

@@ -5,7 +5,7 @@
   "main": "comand/botPrincipal.js",
   "type": "module",
   "scripts": {
-    "start": "node comand/botPrincipal.js"
+    "start": "node --max-old-space-size=380 comand/botPrincipal.js"
   },
   "keywords": [
     "whatsapp",

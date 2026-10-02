@@ -4,6 +4,8 @@ import os from 'os';
 import { fileURLToPath } from 'url';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { pipeline } from 'stream/promises';
+import { Readable } from 'stream';
 import yts from 'yt-search';
 import { Downloader as tiktokDownloader } from '@tobyg74/tiktok-api-dl';
 import Instagram from 'cakkatrok-instagram-downloader';
@@ -24,11 +26,32 @@ function generarRutaTemporal(extension) {
 }
 
 /**
+ * Descarga un archivo directamente a disco mediante streaming (previene agotar los 512MB de RAM en Render)
+ */
+async function descargarUrlADisco(urlDescarga, rutaDestino) {
+    const res = await fetch(urlDescarga, {
+        headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
+        },
+        signal: AbortSignal.timeout(30000)
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status} al descargar stream`);
+    const fileStream = fs.createWriteStream(rutaDestino);
+    await pipeline(Readable.fromWeb(res.body), fileStream);
+    if (!fs.existsSync(rutaDestino) || fs.statSync(rutaDestino).size < 1000) {
+        throw new Error('Archivo descargado inválido o vacío');
+    }
+    return rutaDestino;
+}
+
+/**
  * Descarga directa de TikTok sin marca de agua vía múltiples APIs rápidas (Bajo consumo de RAM y sin bloqueos de IP)
  * @param {string} url 
- * @returns {Promise<{ buffer: Buffer, titulo: string }>}
+ * @returns {Promise<{ rutaArchivo: string, titulo: string }>}
  */
 async function descargarTikTokDirecto(url) {
+    const rutaTemp = generarRutaTemporal('mp4');
+
     // Método 1: @tobyg74/tiktok-api-dl (v3, v1, v2)
     for (const ver of ['v3', 'v1', 'v2']) {
         try {
@@ -37,14 +60,8 @@ async function descargarTikTokDirecto(url) {
                 const videoUrl = res.result.videoHD || res.result.videoSD || res.result.videoWatermark || res.result.video?.playAddr || res.result.play;
                 const titulo = res.result.desc || res.result.title || 'Video de TikTok';
                 if (videoUrl) {
-                    const vRes = await fetch(videoUrl, {
-                        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-                        signal: AbortSignal.timeout(15000)
-                    });
-                    if (vRes.ok) {
-                        const buffer = Buffer.from(await vRes.arrayBuffer());
-                        if (buffer.length > 1000) return { buffer, titulo };
-                    }
+                    await descargarUrlADisco(videoUrl, rutaTemp);
+                    return { rutaArchivo: rutaTemp, titulo };
                 }
             }
         } catch (_) {}
@@ -61,11 +78,8 @@ async function descargarTikTokDirecto(url) {
             const videoUrl = dataTioo.video?.noWatermark || dataTioo.video?.watermark || dataTioo.video;
             const titulo = dataTioo.title || 'Video de TikTok';
             if (videoUrl && typeof videoUrl === 'string') {
-                const vRes = await fetch(videoUrl, { signal: AbortSignal.timeout(15000) });
-                if (vRes.ok) {
-                    const buffer = Buffer.from(await vRes.arrayBuffer());
-                    if (buffer.length > 1000) return { buffer, titulo };
-                }
+                await descargarUrlADisco(videoUrl, rutaTemp);
+                return { rutaArchivo: rutaTemp, titulo };
             }
         }
     } catch (_) {}
@@ -85,15 +99,15 @@ async function descargarTikTokDirecto(url) {
             if (data && data.data && (data.data.play || data.data.wmplay)) {
                 const videoUrl = data.data.play || data.data.wmplay;
                 const titulo = data.data.title || 'Video de TikTok';
-                const videoRes = await fetch(videoUrl, { signal: AbortSignal.timeout(15000) });
-                if (videoRes.ok) {
-                    const arrayBuf = await videoRes.arrayBuffer();
-                    return { buffer: Buffer.from(arrayBuf), titulo };
+                if (videoUrl) {
+                    await descargarUrlADisco(videoUrl, rutaTemp);
+                    return { rutaArchivo: rutaTemp, titulo };
                 }
             }
         }
     } catch (_) {}
 
+    if (fs.existsSync(rutaTemp)) fs.unlinkSync(rutaTemp);
     throw new Error('No se pudo obtener el enlace de TikTok mediante las APIs directas.');
 }
 
@@ -172,17 +186,15 @@ async function descargarAudioYtDlp(url) {
         '--js-runtimes', 'node'
     ];
 
-    if (rutaCookies) {
+    const esYouTube = url.includes('youtube.com') || url.includes('youtu.be');
+
+    if (esYouTube) {
+        // En YouTube, pasar --cookies hace que yt-dlp omita el cliente android ("Skipping client android since it does not support cookies")
+        // y fuerce el cliente web, el cual falla con n-challenge/signature solving en contenedores de servidor.
+        // El cliente android sin cookies descarga directamente audio y video sin 429 y sin n-challenge.
+        argsComunes.push('--extractor-args', 'youtube:player_client=android');
+    } else if (rutaCookies) {
         argsComunes.push('--cookies', rutaCookies);
-        if (url.includes('youtube.com') || url.includes('youtu.be')) {
-            argsComunes.push('--extractor-args', 'youtube:player_client=android,web');
-        }
-    } else {
-        // En servidores en la nube (como Render en AWS), YouTube bloquea clientes web con HTTP Error 429
-        // El cliente 'android' evita el bloqueo de bot y la tasa de peticiones 429
-        if (url.includes('youtube.com') || url.includes('youtu.be')) {
-            argsComunes.push('--extractor-args', 'youtube:player_client=android');
-        }
     }
 
     if (binFfmpeg && binFfmpeg !== 'ffmpeg' && fs.existsSync(binFfmpeg)) {
@@ -206,7 +218,7 @@ async function descargarAudioYtDlp(url) {
         '-x',
         '--audio-format', 'mp3',
         '--audio-quality', '0',
-        '--max-filesize', '50M',
+        '--max-filesize', '40M',
         '-o', `${plantillaSalida}.%(ext)s`,
         url
     ]);
@@ -236,16 +248,12 @@ async function descargarVideoYtDlp(url) {
         '--js-runtimes', 'node'
     ];
 
-    if (rutaCookies) {
+    const esYouTube = url.includes('youtube.com') || url.includes('youtu.be');
+
+    if (esYouTube) {
+        argsComunes.push('--extractor-args', 'youtube:player_client=android');
+    } else if (rutaCookies) {
         argsComunes.push('--cookies', rutaCookies);
-        if (url.includes('youtube.com') || url.includes('youtu.be')) {
-            argsComunes.push('--extractor-args', 'youtube:player_client=android,web');
-        }
-    } else {
-        if (url.includes('youtube.com') || url.includes('youtu.be')) {
-            // El cliente android no activa el error 429 "Sign in to confirm you're not a bot" en datacenters
-            argsComunes.push('--extractor-args', 'youtube:player_client=android');
-        }
     }
 
     if (binFfmpeg && binFfmpeg !== 'ffmpeg' && fs.existsSync(binFfmpeg)) {
@@ -266,7 +274,7 @@ async function descargarVideoYtDlp(url) {
         ...argsComunes,
         '-f', 'bv*[height<=720]+ba/b[height<=720]/best',
         '--merge-output-format', 'mp4',
-        '--max-filesize', '60M',
+        '--max-filesize', '40M',
         '-o', `${plantillaSalida}.%(ext)s`,
         url
     ]);
@@ -320,20 +328,22 @@ export async function manejarTikTok(sock, msgInfo, args) {
     try {
         await sock.sendMessage(from, { react: { text: '⏳', key: m.key } });
 
-        let bufferVideo = null;
+        let rutaVideoFinal = null;
         let tituloVideo = 'TikTok Video';
 
         try {
             const resDirecta = await descargarTikTokDirecto(enlace);
-            bufferVideo = resDirecta.buffer;
+            rutaVideoFinal = resDirecta.rutaArchivo;
             tituloVideo = resDirecta.titulo;
         } catch (errDirecta) {
             console.warn('⚠️ Falló API directa de TikTok, intentando con yt-dlp:', errDirecta.message);
-            const { rutaArchivo, titulo } = await descargarVideoYtDlp(enlace);
-            bufferVideo = fs.readFileSync(rutaArchivo);
-            tituloVideo = titulo;
-            if (fs.existsSync(rutaArchivo)) fs.unlinkSync(rutaArchivo);
+            const resYtdlp = await descargarVideoYtDlp(enlace);
+            rutaVideoFinal = resYtdlp.rutaArchivo;
+            tituloVideo = resYtdlp.titulo;
         }
+
+        const bufferVideo = fs.readFileSync(rutaVideoFinal);
+        if (fs.existsSync(rutaVideoFinal)) fs.unlinkSync(rutaVideoFinal);
 
         await sock.sendMessage(from, {
             video: bufferVideo,
