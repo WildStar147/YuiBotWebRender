@@ -10,7 +10,7 @@ sesion_auth/*
 .env.local
 
 # Binarios descargados
-bin/yt-dlp
+# bin/yt-dlp (incluido en git para garantizar la versión nightly probada en Render)
 Baileys-master/
 
 # Archivos temporales y logs

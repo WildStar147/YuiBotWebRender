@@ -229,7 +229,22 @@ async function descargarAudioYtDlp(url) {
     // Definir estrategias de descarga
     const estrategias = [];
 
-    // Estrategia 1: Con cookies y cliente mobile-web (los clientes móviles nativos ios/android rechazan cookies en yt-dlp)
+    // Estrategia 1 (Prioritaria para YouTube): Cliente VisionOS
+    // Este cliente nativo no sufre por cookies caducadas ni 'The page needs to be reloaded',
+    // ni bloqueos de bot en servidores como Render
+    if (esYouTube) {
+        estrategias.push({
+            nombre: 'visionos-client',
+            args: [
+                '--no-playlist',
+                '--extractor-args', 'youtube:player_client=visionos',
+                '--remote-components', 'ejs:github',
+                '--js-runtimes', runtimeNode
+            ]
+        });
+    }
+
+    // Estrategia 2: Con cookies y cliente mobile-web (los clientes móviles nativos ios/android rechazan cookies en yt-dlp)
     if (rutaCookies) {
         estrategias.push({
             nombre: 'con-cookies-mweb',
@@ -242,7 +257,7 @@ async function descargarAudioYtDlp(url) {
             ]
         });
 
-        // Estrategia 2: Con cookies estándar
+        // Estrategia 3: Con cookies estándar
         estrategias.push({
             nombre: 'con-cookies-standard',
             args: [
@@ -254,8 +269,7 @@ async function descargarAudioYtDlp(url) {
         });
     }
 
-    // Estrategia 3: Clientes móviles sin cookies (iOS / Android) saltándose la descarga de la página HTML
-    // (Bypass de 429 para cuando no hay cookies o fallan las cookies web)
+    // Estrategia 4: Clientes móviles sin cookies (iOS / Android) saltándose la descarga de la página HTML
     if (esYouTube) {
         estrategias.push({
             nombre: 'mobile-client-no-webpage',
@@ -268,7 +282,7 @@ async function descargarAudioYtDlp(url) {
         });
     }
 
-    // Estrategia 4: Estándar por defecto
+    // Estrategia 5: Estándar por defecto
     estrategias.push({
         nombre: 'default',
         args: [
@@ -342,7 +356,20 @@ async function descargarVideoYtDlp(url) {
     // Definir estrategias de descarga
     const estrategias = [];
 
-    // Estrategia 1: Con cookies y cliente mobile-web
+    // Estrategia 1 (Prioritaria para YouTube): Cliente VisionOS
+    if (esYouTube) {
+        estrategias.push({
+            nombre: 'visionos-client',
+            args: [
+                '--no-playlist',
+                '--extractor-args', 'youtube:player_client=visionos',
+                '--remote-components', 'ejs:github',
+                '--js-runtimes', runtimeNode
+            ]
+        });
+    }
+
+    // Estrategia 2: Con cookies y cliente mobile-web
     if (rutaCookies) {
         estrategias.push({
             nombre: 'con-cookies-mweb',
@@ -355,7 +382,7 @@ async function descargarVideoYtDlp(url) {
             ]
         });
 
-        // Estrategia 2: Con cookies estándar
+        // Estrategia 3: Con cookies estándar
         estrategias.push({
             nombre: 'con-cookies-standard',
             args: [
@@ -367,7 +394,7 @@ async function descargarVideoYtDlp(url) {
         });
     }
 
-    // Estrategia 3: Clientes móviles sin cookies
+    // Estrategia 4: Clientes móviles sin cookies
     if (esYouTube) {
         estrategias.push({
             nombre: 'mobile-client-no-webpage',
@@ -380,7 +407,7 @@ async function descargarVideoYtDlp(url) {
         });
     }
 
-    // Estrategia 4: Estándar por defecto
+    // Estrategia 5: Estándar por defecto
     estrategias.push({
         nombre: 'default',
         args: [

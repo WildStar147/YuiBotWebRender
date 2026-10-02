@@ -56,18 +56,7 @@ export async function obtenerRutaFfmpeg() {
 export async function obtenerRutaYtDlp() {
     if (rutaYtDlpFinal && fs.existsSync(rutaYtDlpFinal)) return rutaYtDlpFinal;
 
-    // 1. Probar si yt-dlp ya está en el PATH del sistema
-    try {
-        await execFileAsync('yt-dlp', ['--version']);
-        rutaYtDlpFinal = 'yt-dlp';
-        return 'yt-dlp';
-    } catch (_) {}
-
-    // 2. Verificar si ya existe en ./bin/yt-dlp
-    if (!fs.existsSync(CARPETA_BIN)) {
-        fs.mkdirSync(CARPETA_BIN, { recursive: true });
-    }
-
+    // 1. Priorizar el binario local incluido en ./bin/yt-dlp (Nightly probado)
     if (fs.existsSync(RUTA_YTDLP_LOCAL)) {
         try {
             fs.chmodSync(RUTA_YTDLP_LOCAL, 0o755);
@@ -76,18 +65,28 @@ export async function obtenerRutaYtDlp() {
         } catch (_) {}
     }
 
-    // 3. Descargar automáticamente el binario standalone más reciente de yt-dlp
-    console.log('⬇️ [Binarios] Descargando binario de yt-dlp para el servidor...');
+    // 2. Probar si yt-dlp está en el PATH del sistema
     try {
-        const url = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp';
+        await execFileAsync('yt-dlp', ['--version']);
+        rutaYtDlpFinal = 'yt-dlp';
+        return 'yt-dlp';
+    } catch (_) {}
+
+    // 3. Descargar automáticamente el binario standalone nightly más reciente
+    console.log('⬇️ [Binarios] Descargando binario nightly de yt-dlp para el servidor...');
+    try {
+        if (!fs.existsSync(CARPETA_BIN)) {
+            fs.mkdirSync(CARPETA_BIN, { recursive: true });
+        }
+        const url = 'https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp';
         const respuesta = await fetch(url, { redirect: 'follow' });
         if (!respuesta.ok) {
-            throw new Error(`Código HTTP ${respuesta.status} al descargar yt-dlp`);
+            throw new Error(`Código HTTP ${respuesta.status} al descargar yt-dlp nightly`);
         }
         const buffer = Buffer.from(await respuesta.arrayBuffer());
         fs.writeFileSync(RUTA_YTDLP_LOCAL, buffer);
         fs.chmodSync(RUTA_YTDLP_LOCAL, 0o755);
-        console.log('✅ [Binarios] yt-dlp descargado y configurado exitosamente.');
+        console.log('✅ [Binarios] yt-dlp nightly descargado y configurado exitosamente.');
         rutaYtDlpFinal = RUTA_YTDLP_LOCAL;
         return RUTA_YTDLP_LOCAL;
     } catch (errDescarga) {
