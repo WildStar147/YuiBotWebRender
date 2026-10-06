@@ -1,3 +1,4 @@
+import { jidNormalizedUser } from '@whiskeysockets/baileys';
 import {
     obtenerUsuario,
     actualizarUsuario,
@@ -37,16 +38,41 @@ function formatoTiempo(ms) {
 }
 
 /**
+ * Obtiene el JID de usuario válido del emisor, impidiendo que un ID de grupo sea tomado como usuario
+ */
+function resolverActor(msgInfo) {
+    const { from, sender, esGrupo } = msgInfo;
+    const actor = sender || (!esGrupo ? from : null);
+    if (!actor || actor.endsWith('@g.us')) return null;
+    return jidNormalizedUser(actor);
+}
+
+/**
  * -balance / -bal / -coins [@mención]
  */
 export async function manejarBalance(sock, msgInfo, args) {
-    const { m, from, sender, pushName } = msgInfo;
+    const { m, from, pushName } = msgInfo;
+    const actorJid = resolverActor(msgInfo);
+
     const quoted = m.message?.extendedTextMessage?.contextInfo?.participant;
     const mentioned = m.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
-    const targetJid = quoted || (mentioned.length > 0 ? mentioned[0] : (sender || from));
+    let targetJid = quoted || (mentioned.length > 0 ? mentioned[0] : actorJid);
+    if (targetJid) targetJid = jidNormalizedUser(targetJid);
 
-    const esPropio = targetJid === (sender || from);
+    if (!targetJid || targetJid.endsWith('@g.us')) {
+        targetJid = actorJid;
+    }
+
+    if (!targetJid) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) No pude identificar tu usuario de WhatsApp.` }, { quoted: m });
+    }
+
+    const esPropio = targetJid === actorJid;
     const usuario = await obtenerUsuario(targetJid, esPropio ? pushName : 'Usuario');
+
+    if (!usuario) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) No se pudo cargar el perfil financiero.` }, { quoted: m });
+    }
 
     const wallet = usuario.wallet || 0;
     const banco = usuario.banco || 0;
@@ -78,14 +104,23 @@ export async function manejarBalance(sock, msgInfo, args) {
  * -daily : Recompensa diaria con racha
  */
 export async function manejarDaily(sock, msgInfo) {
-    const { m, from, sender, pushName } = msgInfo;
-    const usuario = await obtenerUsuario(sender || from, pushName);
+    const { m, from, pushName } = msgInfo;
+    const actorJid = resolverActor(msgInfo);
+
+    if (!actorJid) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) No pude identificar tu usuario de WhatsApp.` }, { quoted: m });
+    }
+
+    const usuario = await obtenerUsuario(actorJid, pushName);
+    if (!usuario) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) Error al cargar tu perfil de usuario.` }, { quoted: m });
+    }
 
     const ahora = Date.now();
-    const tiempoPasad = ahora - (usuario.ultimoDaily || 0);
+    const tiempoPasado = ahora - (usuario.ultimoDaily || 0);
 
-    if (tiempoPasad < COOLDOWN_DAILY) {
-        const restante = COOLDOWN_DAILY - tiempoPasad;
+    if (tiempoPasado < COOLDOWN_DAILY) {
+        const restante = COOLDOWN_DAILY - tiempoPasado;
         return await sock.sendMessage(from, {
             text: `(•́ω•̀)? ¡Uwaaa, ${pushName}! Ya reclamaste tu recompensa diaria hoy.\n` +
                   `⏳ *Vuelve en:* ${formatoTiempo(restante)} 🍰✨`
@@ -93,7 +128,7 @@ export async function manejarDaily(sock, msgInfo) {
     }
 
     // Comprobar racha (si pasaron más de 48h desde el último reclamo, se reinicia la racha)
-    if (tiempoPasad > COOLDOWN_DAILY * 2) {
+    if (tiempoPasado > COOLDOWN_DAILY * 2) {
         usuario.rachaDaily = 1;
     } else {
         usuario.rachaDaily = (usuario.rachaDaily || 0) + 1;
@@ -126,8 +161,17 @@ export async function manejarDaily(sock, msgInfo) {
  * -work / -w : Trabajar para ganar dinero
  */
 export async function manejarWork(sock, msgInfo) {
-    const { m, from, sender, pushName } = msgInfo;
-    const usuario = await obtenerUsuario(sender || from, pushName);
+    const { m, from, pushName } = msgInfo;
+    const actorJid = resolverActor(msgInfo);
+
+    if (!actorJid) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) No pude identificar tu usuario de WhatsApp.` }, { quoted: m });
+    }
+
+    const usuario = await obtenerUsuario(actorJid, pushName);
+    if (!usuario) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) Error al cargar tu perfil de usuario.` }, { quoted: m });
+    }
 
     const ahora = Date.now();
     const tiempoPasado = ahora - (usuario.ultimoWork || 0);
@@ -153,7 +197,6 @@ export async function manejarWork(sock, msgInfo) {
     ];
 
     const trabajo = TRABAJOS[Math.floor(Math.random() * TRABAJOS.length)];
-    // Pequeño bono aleatorio
     const ganancia = trabajo.pago + Math.floor(Math.random() * 80);
 
     usuario.wallet = (usuario.wallet || 0) + ganancia;
@@ -177,8 +220,17 @@ export async function manejarWork(sock, msgInfo) {
  * -crime : Cometer un crimen con riesgo de multa
  */
 export async function manejarCrime(sock, msgInfo) {
-    const { m, from, sender, pushName } = msgInfo;
-    const usuario = await obtenerUsuario(sender || from, pushName);
+    const { m, from, pushName } = msgInfo;
+    const actorJid = resolverActor(msgInfo);
+
+    if (!actorJid) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) No pude identificar tu usuario de WhatsApp.` }, { quoted: m });
+    }
+
+    const usuario = await obtenerUsuario(actorJid, pushName);
+    if (!usuario) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) Error al cargar tu perfil de usuario.` }, { quoted: m });
+    }
 
     const ahora = Date.now();
     const tiempoPasado = ahora - (usuario.ultimoCrime || 0);
@@ -239,8 +291,17 @@ export async function manejarCrime(sock, msgInfo) {
  * -slut : Actividad riesgosa con recompensa o pérdidas
  */
 export async function manejarSlut(sock, msgInfo) {
-    const { m, from, sender, pushName } = msgInfo;
-    const usuario = await obtenerUsuario(sender || from, pushName);
+    const { m, from, pushName } = msgInfo;
+    const actorJid = resolverActor(msgInfo);
+
+    if (!actorJid) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) No pude identificar tu usuario de WhatsApp.` }, { quoted: m });
+    }
+
+    const usuario = await obtenerUsuario(actorJid, pushName);
+    if (!usuario) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) Error al cargar tu perfil de usuario.` }, { quoted: m });
+    }
 
     const ahora = Date.now();
     const tiempoPasado = ahora - (usuario.ultimoSlut || 0);
@@ -291,19 +352,26 @@ export async function manejarSlut(sock, msgInfo) {
  * -steal / -robar / -rob [@mención] : Intentar robar coins a otro usuario
  */
 export async function manejarSteal(sock, msgInfo, args) {
-    const { m, from, sender, pushName } = msgInfo;
+    const { m, from, pushName } = msgInfo;
+    const actorJid = resolverActor(msgInfo);
+
+    if (!actorJid) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) No pude identificar tu usuario de WhatsApp.` }, { quoted: m });
+    }
+
     const quoted = m.message?.extendedTextMessage?.contextInfo?.participant;
     const mentioned = m.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
-    const targetJid = quoted || (mentioned.length > 0 ? mentioned[0] : null);
+    let targetJid = quoted || (mentioned.length > 0 ? mentioned[0] : null);
+    if (targetJid) targetJid = jidNormalizedUser(targetJid);
 
-    if (!targetJid || targetJid === (sender || from)) {
+    if (!targetJid || targetJid === actorJid || targetJid.endsWith('@g.us')) {
         return await sock.sendMessage(from, {
             text: `(•́ω•̀)? ¡Debes etiquetar o responder al mensaje de alguien para robarle!\n` +
                   `👉 *Ejemplo:* *-robar @amigo*`
         }, { quoted: m });
     }
 
-    const ladron = await obtenerUsuario(sender || from, pushName);
+    const ladron = await obtenerUsuario(actorJid, pushName);
     const ahora = Date.now();
     const tiempoPasado = ahora - (ladron.ultimoRobo || 0);
 
@@ -342,7 +410,7 @@ export async function manejarSteal(sock, msgInfo, args) {
         await sock.sendMessage(from, { react: { text: '💰', key: m.key } });
 
         const texto = `╭━━━〔 🕵️‍♂️ *ROBO EXITOSO* 〕━━━╮\n` +
-                      `┃ ¡@${(sender || from).split('@')[0]} fue súper sigilos@ y le quitó dinero a @${targetJid.split('@')[0]}!\n` +
+                      `┃ ¡@${actorJid.split('@')[0]} fue súper sigilos@ y le quitó dinero a @${targetJid.split('@')[0]}!\n` +
                       `┃ 💵 *Monto sustraído:* $${fNum(robado)} coins\n` +
                       `┃ 👛 *Tu nuevo balance:* $${fNum(ladron.wallet)} coins\n` +
                       `╰━━━━━━━━━━━━━━━━━━━━━━╯\n` +
@@ -350,7 +418,7 @@ export async function manejarSteal(sock, msgInfo, args) {
 
         await sock.sendMessage(from, {
             text: texto,
-            mentions: [sender || from, targetJid]
+            mentions: [actorJid, targetJid]
         }, { quoted: m });
     } else {
         // Falla y paga compensación a la víctima
@@ -364,7 +432,7 @@ export async function manejarSteal(sock, msgInfo, args) {
         await sock.sendMessage(from, { react: { text: '🚨', key: m.key } });
 
         const texto = `╭━━━〔 🚓 *¡INTENTO DE ROBO FRUSTRADO!* 〕━━━╮\n` +
-                      `┃ ¡@${targetJid.split('@')[0]} descubrió a @${(sender || from).split('@')[0]} y le dio una buena tunda!\n` +
+                      `┃ ¡@${targetJid.split('@')[0]} descubrió a @${actorJid.split('@')[0]} y le dio una buena tunda!\n` +
                       `┃ 💸 *Compensación pagada a la víctima:* $${fNum(multa)} coins\n` +
                       `┃ 👛 *Tu Wallet restante:* $${fNum(ladron.wallet)} coins\n` +
                       `╰━━━━━━━━━━━━━━━━━━━━━━╯\n` +
@@ -372,7 +440,7 @@ export async function manejarSteal(sock, msgInfo, args) {
 
         await sock.sendMessage(from, {
             text: texto,
-            mentions: [sender || from, targetJid]
+            mentions: [actorJid, targetJid]
         }, { quoted: m });
     }
 }
@@ -381,8 +449,14 @@ export async function manejarSteal(sock, msgInfo, args) {
  * -deposit / -dep [cantidad | all]
  */
 export async function manejarDeposit(sock, msgInfo, args) {
-    const { m, from, sender, pushName } = msgInfo;
-    const usuario = await obtenerUsuario(sender || from, pushName);
+    const { m, from, pushName } = msgInfo;
+    const actorJid = resolverActor(msgInfo);
+
+    if (!actorJid) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) No pude identificar tu usuario de WhatsApp.` }, { quoted: m });
+    }
+
+    const usuario = await obtenerUsuario(actorJid, pushName);
     const montoArg = (args[0] || '').toLowerCase();
 
     if (!montoArg) {
@@ -430,8 +504,14 @@ export async function manejarDeposit(sock, msgInfo, args) {
  * -withdraw / -with / -retirar [cantidad | all]
  */
 export async function manejarWithdraw(sock, msgInfo, args) {
-    const { m, from, sender, pushName } = msgInfo;
-    const usuario = await obtenerUsuario(sender || from, pushName);
+    const { m, from, pushName } = msgInfo;
+    const actorJid = resolverActor(msgInfo);
+
+    if (!actorJid) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) No pude identificar tu usuario de WhatsApp.` }, { quoted: m });
+    }
+
+    const usuario = await obtenerUsuario(actorJid, pushName);
     const montoArg = (args[0] || '').toLowerCase();
 
     if (!montoArg) {
@@ -479,10 +559,17 @@ export async function manejarWithdraw(sock, msgInfo, args) {
  * -givecoins / -pay [@mención] [cantidad]
  */
 export async function manejarPay(sock, msgInfo, args) {
-    const { m, from, sender, pushName } = msgInfo;
+    const { m, from, pushName } = msgInfo;
+    const actorJid = resolverActor(msgInfo);
+
+    if (!actorJid) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) No pude identificar tu usuario de WhatsApp.` }, { quoted: m });
+    }
+
     const quoted = m.message?.extendedTextMessage?.contextInfo?.participant;
     const mentioned = m.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
-    const targetJid = quoted || (mentioned.length > 0 ? mentioned[0] : null);
+    let targetJid = quoted || (mentioned.length > 0 ? mentioned[0] : null);
+    if (targetJid) targetJid = jidNormalizedUser(targetJid);
 
     const cantidadArg = args.find(a => !a.startsWith('@') && !isNaN(parseInt(a, 10)));
     const cantidad = parseInt(cantidadArg, 10);
@@ -495,11 +582,11 @@ export async function manejarPay(sock, msgInfo, args) {
         }, { quoted: m });
     }
 
-    if (targetJid === (sender || from)) {
-        return await sock.sendMessage(from, { text: `¡No te puedes transferir dinero a ti mism@! (≧∇≦)/` }, { quoted: m });
+    if (targetJid === actorJid || targetJid.endsWith('@g.us')) {
+        return await sock.sendMessage(from, { text: `¡No te puedes transferir dinero a ti mism@ ni a un grupo! (≧∇≦)/` }, { quoted: m });
     }
 
-    const remitente = await obtenerUsuario(sender || from, pushName);
+    const remitente = await obtenerUsuario(actorJid, pushName);
     if ((remitente.wallet || 0) < cantidad) {
         return await sock.sendMessage(from, {
             text: `(╥﹏╥) No tienes suficientes coins en mano. Tu Wallet es de solo *$${fNum(remitente.wallet)}* coins.`
@@ -517,12 +604,12 @@ export async function manejarPay(sock, msgInfo, args) {
     await sock.sendMessage(from, { react: { text: '💸', key: m.key } });
 
     const texto = `💸 *¡Transferencia completada!* (≧∇≦)/ 🍓\n` +
-                  `👤 @${(sender || from).split('@')[0]} le envió *$${fNum(cantidad)} coins* a @${targetJid.split('@')[0]} ✨\n` +
+                  `👤 @${actorJid.split('@')[0]} le envió *$${fNum(cantidad)} coins* a @${targetJid.split('@')[0]} ✨\n` +
                   `👛 *Tu nuevo saldo:* $${fNum(remitente.wallet)} coins`;
 
     await sock.sendMessage(from, {
         text: texto,
-        mentions: [sender || from, targetJid]
+        mentions: [actorJid, targetJid]
     }, { quoted: m });
 }
 
@@ -530,9 +617,14 @@ export async function manejarPay(sock, msgInfo, args) {
  * -coinflip / -flip / -cf [cantidad] [cara/cruz]
  */
 export async function manejarCoinflip(sock, msgInfo, args) {
-    const { m, from, sender, pushName } = msgInfo;
-    const usuario = await obtenerUsuario(sender || from, pushName);
+    const { m, from, pushName } = msgInfo;
+    const actorJid = resolverActor(msgInfo);
 
+    if (!actorJid) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) No pude identificar tu usuario de WhatsApp.` }, { quoted: m });
+    }
+
+    const usuario = await obtenerUsuario(actorJid, pushName);
     const cantidadArg = args[0];
     const eleccionArg = (args[1] || 'cara').toLowerCase();
 
@@ -585,9 +677,14 @@ export async function manejarCoinflip(sock, msgInfo, args) {
  * -roulette / -rt [red/black | rojo/negro] [cantidad]
  */
 export async function manejarRoulette(sock, msgInfo, args) {
-    const { m, from, sender, pushName } = msgInfo;
-    const usuario = await obtenerUsuario(sender || from, pushName);
+    const { m, from, pushName } = msgInfo;
+    const actorJid = resolverActor(msgInfo);
 
+    if (!actorJid) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) No pude identificar tu usuario de WhatsApp.` }, { quoted: m });
+    }
+
+    const usuario = await obtenerUsuario(actorJid, pushName);
     const colorArg = (args[0] || '').toLowerCase();
     const cantidadArg = args[1];
 
@@ -691,8 +788,14 @@ export async function manejarBaltop(sock, msgInfo, args) {
  * -economyinfo / -einfo
  */
 export async function manejarEconomyInfo(sock, msgInfo) {
-    const { m, from, sender, pushName } = msgInfo;
-    const u = await obtenerUsuario(sender || from, pushName);
+    const { m, from, pushName } = msgInfo;
+    const actorJid = resolverActor(msgInfo);
+
+    if (!actorJid) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) No pude identificar tu usuario de WhatsApp.` }, { quoted: m });
+    }
+
+    const u = await obtenerUsuario(actorJid, pushName);
     const est = u.estadisticas || {};
 
     const texto = `╭━━━〔 📊 *ESTADÍSTICAS DE ECONOMÍA* 〕━━━╮\n` +

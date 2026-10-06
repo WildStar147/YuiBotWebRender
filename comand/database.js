@@ -3,6 +3,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { MongoClient } from 'mongodb';
 
+import { jidNormalizedUser } from '@whiskeysockets/baileys';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -65,6 +67,13 @@ export async function inicializarDB() {
             cacheUsuarios = new Map(Object.entries(parsed));
         }
 
+        // Limpiar cualquier entrada errónea de grupos que se haya guardado previamente
+        for (const [key] of cacheUsuarios.entries()) {
+            if (key.endsWith('@g.us')) {
+                cacheUsuarios.delete(key);
+            }
+        }
+
         if (fs.existsSync(RUTA_MARKET_LOCAL)) {
             const dataM = fs.readFileSync(RUTA_MARKET_LOCAL, 'utf-8');
             cacheMercado = JSON.parse(dataM);
@@ -79,8 +88,9 @@ export async function inicializarDB() {
  * Guarda los datos en el medio correspondiente (Mongo o Disco)
  */
 async function guardarUsuario(usuario) {
-    if (!usuario || !usuario.id) return;
+    if (!usuario || !usuario.id || usuario.id.endsWith('@g.us')) return;
 
+    usuario.id = jidNormalizedUser(usuario.id);
     cacheUsuarios.set(usuario.id, usuario);
 
     if (usandoMongo && mongoDb) {
@@ -132,13 +142,19 @@ async function guardarMercado() {
  * @returns {object} Perfil completo del usuario
  */
 export async function obtenerUsuario(usuarioId, pushName = 'Usuario') {
-    if (!usuarioId) return null;
+    if (!usuarioId || typeof usuarioId !== 'string') return null;
 
-    let user = cacheUsuarios.get(usuarioId);
+    const cleanId = jidNormalizedUser(usuarioId);
+    if (!cleanId || cleanId.endsWith('@g.us')) {
+        console.warn('⚠️ Se rechazó acceso a perfil de usuario con ID de grupo o inválido:', usuarioId);
+        return null;
+    }
+
+    let user = cacheUsuarios.get(cleanId);
 
     if (!user) {
         user = {
-            id: usuarioId,
+            id: cleanId,
             nombre: pushName || 'Usuario',
             wallet: 500, // Balance inicial de bienvenida
             banco: 0,
@@ -191,6 +207,7 @@ export async function obtenerUsuario(usuarioId, pushName = 'Usuario') {
  * Actualiza los datos de un usuario
  */
 export async function actualizarUsuario(user) {
+    if (!user || !user.id || user.id.endsWith('@g.us')) return;
     await guardarUsuario(user);
 }
 
@@ -198,7 +215,7 @@ export async function actualizarUsuario(user) {
  * Obtiene todos los usuarios ordenados por riqueza total (Wallet + Banco)
  */
 export function obtenerTopEconomia() {
-    const lista = Array.from(cacheUsuarios.values());
+    const lista = Array.from(cacheUsuarios.values()).filter(u => u.id && !u.id.endsWith('@g.us'));
     lista.sort((a, b) => {
         const totalA = (a.wallet || 0) + (a.banco || 0);
         const totalB = (b.wallet || 0) + (b.banco || 0);
@@ -211,7 +228,7 @@ export function obtenerTopEconomia() {
  * Obtiene los mejores coleccionistas por valor total de su harem
  */
 export function obtenerTopHarem() {
-    const lista = Array.from(cacheUsuarios.values());
+    const lista = Array.from(cacheUsuarios.values()).filter(u => u.id && !u.id.endsWith('@g.us'));
     return lista
         .map(u => {
             const valorTotal = (u.harem || []).reduce((acc, c) => acc + (c.valor || c.valorBase || 0), 0);
@@ -267,6 +284,7 @@ export function marcarRolloReclamado(chatId) {
  */
 export function buscarDuenioWaifu(waifuId, waifuNombre) {
     for (const u of cacheUsuarios.values()) {
+        if (!u.id || u.id.endsWith('@g.us')) continue;
         const found = (u.harem || []).find(
             w => (waifuId && w.id === waifuId) || 
                  (waifuNombre && w.nombre?.toLowerCase() === waifuNombre?.toLowerCase())

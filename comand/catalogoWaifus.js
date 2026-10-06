@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { buscarPinterest } from './descargas.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -250,3 +251,206 @@ export function obtenerListaSeries() {
     const seriesSet = new Set(catalogo.map(c => c.anime).filter(Boolean));
     return Array.from(seriesSet).sort();
 }
+
+// Cache para páginas del top global de AniList (10 minutos)
+const cacheTopGlobal = new Map();
+const CACHE_TOP_TIEMPO = 10 * 60 * 1000;
+
+/**
+ * Consulta el ranking oficial de AniList de personajes más populares del mundo
+ * @param {number} pagina
+ * @param {number} perPage
+ */
+export async function obtenerTopGlobalWaifus(pagina = 1, perPage = 10) {
+    const key = `${pagina}_${perPage}`;
+    const cached = cacheTopGlobal.get(key);
+    if (cached && Date.now() - cached.timestamp < CACHE_TOP_TIEMPO) {
+        return cached.data;
+    }
+
+    const query = `
+    query ($page: Int, $perPage: Int) {
+      Page(page: $page, perPage: $perPage) {
+        pageInfo {
+          total
+          currentPage
+          lastPage
+          hasNextPage
+        }
+        characters(sort: FAVOURITES_DESC) {
+          id
+          name { full native }
+          favourites
+          gender
+          image { large }
+          media(type: ANIME, sort: POPULARITY_DESC, perPage: 1) {
+            nodes {
+              title { romaji english }
+            }
+          }
+        }
+      }
+    }
+    `;
+
+    try {
+        const res = await fetch('https://graphql.anilist.co', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify({ query, variables: { page: pagina, perPage } }),
+            signal: AbortSignal.timeout(6000)
+        });
+
+        if (!res.ok) return [];
+        const data = await res.json();
+        const lista = data.data?.Page?.characters || [];
+
+        const formateados = lista.map(c => {
+            const anime = c.media?.nodes?.[0]?.title?.romaji || c.media?.nodes?.[0]?.title?.english || 'Anime';
+            const { rareza, valor, estrellas } = calcularRarezaYValor(c.favourites || 0);
+            return {
+                id: c.id,
+                nombre: c.name.full,
+                anime,
+                genero: c.gender || 'Femenino',
+                imagen: c.image?.large,
+                rareza,
+                estrellas,
+                valor,
+                favoritos: c.favourites || 0
+            };
+        });
+
+        cacheTopGlobal.set(key, { data: formateados, timestamp: Date.now() });
+        return formateados;
+    } catch (e) {
+        console.warn('⚠️ Error al consultar top global de AniList:', e.message);
+        return [];
+    }
+}
+
+/**
+ * Busca una galería con muchísimas fotos de una misma waifu o personaje
+ * @param {string} nombre
+ * @returns {Promise<{ nombre: string, anime: string, imagenes: Array<string> }>}
+ */
+export async function buscarFotosWaifu(nombre) {
+    if (!nombre) return null;
+    const cleanNombre = nombre.trim();
+
+    // 1. Obtener datos base y foto oficial desde AniList/catálogo
+    const info = await buscarWaifuPorNombre(cleanNombre);
+    const nombreOficial = info?.nombre || cleanNombre;
+    const anime = info?.anime || 'Anime';
+
+    const pool = [];
+    if (info?.imagen) {
+        pool.push(info.imagen);
+    }
+
+    // 2. Buscar en Pinterest para tener un montón de imágenes variadas
+    try {
+        const pins = await buscarPinterest(`${nombreOficial} anime`);
+        for (const p of pins) {
+            if (p && !pool.includes(p)) pool.push(p);
+        }
+    } catch (_) {}
+
+    // 3. Si no hay suficientes, intentar con Safebooru
+    if (pool.length < 5) {
+        try {
+            const tag = cleanNombre.toLowerCase().replace(/\s+/g, '_');
+            const res = await fetch(`https://safebooru.org/index.php?page=dapi&s=post&q=index&json=1&tags=${encodeURIComponent(tag)}&limit=15`, {
+                signal: AbortSignal.timeout(5000)
+            });
+            if (res.ok) {
+                const items = await res.json();
+                for (const item of items) {
+                    if (item?.directory && item?.image) {
+                        const url = `https://safebooru.org/images/${item.directory}/${item.image}`;
+                        if (!pool.includes(url)) pool.push(url);
+                    }
+                }
+            }
+        } catch (_) {}
+    }
+
+    return {
+        nombre: nombreOficial,
+        anime,
+        imagenes: pool
+    };
+}
+
+/**
+ * Busca videos o GIFs animados de una waifu o anime
+ * @param {string} nombre
+ * @returns {Promise<{ url: string, titulo: string, esGif: boolean, categoria?: string }|null>}
+ */
+export async function buscarVideoWaifu(nombre = '') {
+    const clean = (nombre || '').trim();
+
+    // 1. Si especificó nombre de personaje, buscar GIFs específicos en Pinterest
+    if (clean) {
+        try {
+            const pins = await buscarPinterest(`${clean} gif`);
+            const soloGifs = pins.filter(u => u && (u.endsWith('.gif') || u.endsWith('.mp4')));
+            if (soloGifs.length > 0) {
+                const elegido = soloGifs[Math.floor(Math.random() * soloGifs.length)];
+                return {
+                    url: elegido,
+                    titulo: clean,
+                    esGif: true
+                };
+            }
+        } catch (_) {}
+    }
+
+    // 2. Si no especificó nombre o no se encontraron GIFs específicos, usar nekos.best
+    const acciones = [
+        'dance', 'smile', 'smug', 'blush', 'cuddle', 'happy',
+        'spin', 'poke', 'wave', 'wink', 'hug', 'pat', 'kiss'
+    ];
+    const cat = acciones[Math.floor(Math.random() * acciones.length)];
+
+    try {
+        const res = await fetch(`https://nekos.best/api/v2/${cat}`, { signal: AbortSignal.timeout(6000) });
+        if (res.ok) {
+            const data = await res.json();
+            const item = data.results?.[0];
+            if (item?.url) {
+                return {
+                    url: item.url,
+                    titulo: item.anime_name || clean || 'Anime',
+                    categoria: cat,
+                    esGif: true
+                };
+            }
+        }
+    } catch (_) {}
+
+    return null;
+}
+
+/**
+ * Obtiene una waifu o neko aleatoria de alta definición desde nekos.best
+ * @param {'waifu'|'neko'|'husbando'|'kitsune'} tipo
+ */
+export async function obtenerNekoRandom(tipo = 'waifu') {
+    try {
+        const res = await fetch(`https://nekos.best/api/v2/${tipo}`, { signal: AbortSignal.timeout(6000) });
+        if (res.ok) {
+            const data = await res.json();
+            const item = data.results?.[0];
+            if (item?.url) {
+                return {
+                    url: item.url,
+                    artista: item.artist_name || 'Desconocido',
+                    fuente: item.source_url || item.artist_href || ''
+                };
+            }
+        }
+    } catch (_) {}
+    return null;
+}
+

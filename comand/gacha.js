@@ -1,3 +1,4 @@
+import { jidNormalizedUser } from '@whiskeysockets/baileys';
 import {
     obtenerUsuario,
     actualizarUsuario,
@@ -14,7 +15,11 @@ import {
     obtenerWaifuAleatoria,
     buscarWaifuPorNombre,
     obtenerCatalogoCompleto,
-    obtenerListaSeries
+    obtenerListaSeries,
+    obtenerTopGlobalWaifus,
+    buscarFotosWaifu,
+    buscarVideoWaifu,
+    obtenerNekoRandom
 } from './catalogoWaifus.js';
 
 const COOLDOWN_ROLL = 15 * 60 * 1000; // 15 minutos
@@ -40,11 +45,30 @@ function formatoTiempo(ms) {
 }
 
 /**
+ * Obtiene el JID de usuario válido del emisor, impidiendo que un ID de grupo sea tomado como usuario
+ */
+function resolverActor(msgInfo) {
+    const { from, sender, esGrupo } = msgInfo;
+    const actor = sender || (!esGrupo ? from : null);
+    if (!actor || actor.endsWith('@g.us')) return null;
+    return jidNormalizedUser(actor);
+}
+
+/**
  * -roll / -rw / -rollwaifu / -waifu
  */
 export async function manejarRoll(sock, msgInfo) {
-    const { m, from, sender, pushName } = msgInfo;
-    const usuario = await obtenerUsuario(sender || from, pushName);
+    const { m, from, pushName } = msgInfo;
+    const actorJid = resolverActor(msgInfo);
+
+    if (!actorJid) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) No pude identificar tu usuario de WhatsApp.` }, { quoted: m });
+    }
+
+    const usuario = await obtenerUsuario(actorJid, pushName);
+    if (!usuario) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) Error al cargar tu perfil de usuario.` }, { quoted: m });
+    }
 
     const ahora = Date.now();
     const tiempoPasado = ahora - (usuario.ultimoRoll || 0);
@@ -113,7 +137,13 @@ export async function manejarRoll(sock, msgInfo) {
  * -claim / -c / -reclamar [nombre]
  */
 export async function manejarClaim(sock, msgInfo, args) {
-    const { m, from, sender, pushName } = msgInfo;
+    const { m, from, pushName } = msgInfo;
+    const actorJid = resolverActor(msgInfo);
+
+    if (!actorJid) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) No pude identificar tu usuario de WhatsApp.` }, { quoted: m });
+    }
+
     const rollo = obtenerRolloActivo(from);
 
     if (!rollo || rollo.reclamado) {
@@ -136,7 +166,7 @@ export async function manejarClaim(sock, msgInfo, args) {
     }
 
     // Agregar al harem del usuario
-    const usuario = await obtenerUsuario(sender || from, pushName);
+    const usuario = await obtenerUsuario(actorJid, pushName);
     const itemHarem = {
         id: waifu.id,
         nombre: waifu.nombre,
@@ -168,20 +198,31 @@ export async function manejarClaim(sock, msgInfo, args) {
                   `╰━━━━━━━━━━━━━━━━━━━━━━╯` +
                   mensajeReclamo;
 
-    await sock.sendMessage(from, { text: texto }, { quoted: m });
+    await sock.sendMessage(from, { text: texto, mentions: [actorJid] }, { quoted: m });
 }
 
 /**
  * -harem / -waifus / -claims [@mención] [página]
  */
 export async function manejarHarem(sock, msgInfo, args) {
-    const { m, from, sender, pushName } = msgInfo;
+    const { m, from, pushName } = msgInfo;
+    const actorJid = resolverActor(msgInfo);
+
     const quoted = m.message?.extendedTextMessage?.contextInfo?.participant;
     const mentioned = m.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
-    const targetJid = quoted || (mentioned.length > 0 ? mentioned[0] : (sender || from));
+    let targetJid = quoted || (mentioned.length > 0 ? mentioned[0] : actorJid);
+    if (targetJid) targetJid = jidNormalizedUser(targetJid);
 
-    const esPropio = targetJid === (sender || from);
+    if (!targetJid || targetJid.endsWith('@g.us')) {
+        targetJid = actorJid;
+    }
+
+    const esPropio = targetJid === actorJid;
     const usuario = await obtenerUsuario(targetJid, esPropio ? pushName : 'Usuario');
+
+    if (!usuario) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) No se pudo cargar el perfil de este usuario.` }, { quoted: m });
+    }
 
     const paginaArg = args.find(a => !a.startsWith('@') && !isNaN(parseInt(a, 10)));
     const pagina = Math.max(1, parseInt(paginaArg, 10) || 1);
@@ -231,19 +272,19 @@ export async function manejarCharInfo(sock, msgInfo, args) {
 
     if (!busqueda) {
         return await sock.sendMessage(from, {
-            text: `(•́ω•̀)? Ingresa el nombre del personaje que deseas buscar.\n👉 *Ejemplo:* *-winfo Yui Hirasawa*`
+            text: `(•́ω•̀)? Escribe el nombre del personaje a buscar.\n👉 *Ejemplo:* *-winfo Marin Kitagawa*`
         }, { quoted: m });
     }
 
     const waifu = await buscarWaifuPorNombre(busqueda);
     if (!waifu) {
         return await sock.sendMessage(from, {
-            text: `(╥﹏╥) No encontré a ningún personaje llamado "*${busqueda}*" en el catálogo.`
+            text: `(╥﹏╥) No encontré a "*${busqueda}*" en la base de datos de anime.`
         }, { quoted: m });
     }
 
     const infoDuenio = buscarDuenioWaifu(waifu.id, waifu.nombre);
-    let duenioTexto = '🔓 *Libre para reclamar en ruletas*';
+    let duenioTexto = '🔓 *Estado:* ¡Libre! (Nadie la ha reclamado aún)';
     const menciones = [];
 
     if (infoDuenio) {
@@ -277,38 +318,106 @@ export async function manejarCharInfo(sock, msgInfo, args) {
 
 /**
  * -charimage / -cimage [nombre]
+ * Búsqueda de múltiples fotos de cualquier waifu o nekos.best
  */
 export async function manejarCharImage(sock, msgInfo, args) {
     const { m, from } = msgInfo;
     const busqueda = args.join(' ').trim();
 
+    // Si no se proporcionó nombre, enviar una waifu/neko aleatoria de alta definición de nekos.best
     if (!busqueda) {
+        await sock.sendMessage(from, { react: { text: '🐱', key: m.key } });
+        const neko = await obtenerNekoRandom(Math.random() < 0.5 ? 'waifu' : 'neko');
+        if (neko && neko.url) {
+            return await sock.sendMessage(from, {
+                image: { url: neko.url },
+                caption: `🐱 *Waifu / Neko Aleatoria* (nekos.best) 💕\n` +
+                         `🎨 *Artista:* ${neko.artista}\n` +
+                         `_💡 Escribe -cimage [nombre] para buscar fotos de una waifu específica (ej: -cimage Marin Kitagawa)_ 🍰`
+            }, { quoted: m });
+        }
         return await sock.sendMessage(from, {
-            text: `(•́ω•̀)? Escribe el nombre del personaje para ver su foto.\n👉 *Ejemplo:* *-cimage Marin Kitagawa*`
+            text: `(•́ω•̀)? Escribe el nombre del personaje para ver fotos de su galería.\n👉 *Ejemplo:* *-cimage Marin Kitagawa*`
         }, { quoted: m });
     }
 
-    const waifu = await buscarWaifuPorNombre(busqueda);
-    if (!waifu || !waifu.imagen) {
+    await sock.sendMessage(from, { react: { text: '🔍', key: m.key } });
+    const galeria = await buscarFotosWaifu(busqueda);
+
+    if (!galeria || !galeria.imagenes || galeria.imagenes.length === 0) {
         return await sock.sendMessage(from, {
-            text: `(╥﹏╥) No encontré la imagen de "*${busqueda}*".`
+            text: `(╥﹏╥) No encontré imágenes de "*${busqueda}*". Intenta con otro nombre o anime.`
         }, { quoted: m });
     }
+
+    // Elegir una imagen aleatoria del pool para variedad infinita
+    const indice = Math.floor(Math.random() * galeria.imagenes.length);
+    const imagenUrl = galeria.imagenes[indice];
 
     await sock.sendMessage(from, {
-        image: { url: waifu.imagen },
-        caption: `🌸 *${waifu.nombre}* (${waifu.anime}) ✨`
+        image: { url: imagenUrl },
+        caption: `🌸 *${galeria.nombre}* (${galeria.anime}) ✨\n` +
+                 `🖼️ *Galería:* Foto ${indice + 1} de ${galeria.imagenes.length} encontradas en la comunidad 🍰`
     }, { quoted: m });
+}
+
+/**
+ * -charvideo / -cvideo / -waifuvideo [nombre opcional]
+ * Videos y GIFs animados de anime y waifus
+ */
+export async function manejarCharVideo(sock, msgInfo, args) {
+    const { m, from } = msgInfo;
+    const busqueda = args.join(' ').trim();
+
+    await sock.sendMessage(from, { react: { text: '🎬', key: m.key } });
+    const vid = await buscarVideoWaifu(busqueda);
+
+    if (!vid || !vid.url) {
+        return await sock.sendMessage(from, {
+            text: `(╥﹏╥) No encontré animaciones ni videos para "*${busqueda}*".`
+        }, { quoted: m });
+    }
+
+    try {
+        const res = await fetch(vid.url, { signal: AbortSignal.timeout(12000) });
+        if (!res.ok) throw new Error('Error al descargar medio');
+        const buffer = Buffer.from(await res.arrayBuffer());
+
+        const caption = vid.categoria
+            ? `🎬 *Anime:* ${vid.titulo} (${vid.categoria}) ✨\n_Cortesía de nekos.best & Yui Bot_ 🍰`
+            : `🎬 *${vid.titulo}* (Animación) ✨\n_Cortesía de Yui Bot_ 🍰`;
+
+        await sock.sendMessage(from, {
+            video: buffer,
+            gifPlayback: true,
+            caption
+        }, { quoted: m });
+    } catch (e) {
+        console.warn('⚠️ Error enviando buffer de video/gif:', e.message);
+        // Fallback enviando enlace por objeto
+        await sock.sendMessage(from, {
+            video: { url: vid.url },
+            gifPlayback: true,
+            caption: `🎬 *${vid.titulo}* (Animación) ✨`
+        }, { quoted: m });
+    }
 }
 
 /**
  * -givechar / -givewaifu / -regalar [@mención] [nombre]
  */
 export async function manejarGiveChar(sock, msgInfo, args) {
-    const { m, from, sender, pushName } = msgInfo;
+    const { m, from, pushName } = msgInfo;
+    const actorJid = resolverActor(msgInfo);
+
+    if (!actorJid) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) No pude identificar tu usuario de WhatsApp.` }, { quoted: m });
+    }
+
     const quoted = m.message?.extendedTextMessage?.contextInfo?.participant;
     const mentioned = m.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
-    const targetJid = quoted || (mentioned.length > 0 ? mentioned[0] : null);
+    let targetJid = quoted || (mentioned.length > 0 ? mentioned[0] : null);
+    if (targetJid) targetJid = jidNormalizedUser(targetJid);
 
     const nombrePersonaje = args.filter(a => !a.startsWith('@')).join(' ').trim();
 
@@ -318,11 +427,11 @@ export async function manejarGiveChar(sock, msgInfo, args) {
         }, { quoted: m });
     }
 
-    if (targetJid === (sender || from)) {
-        return await sock.sendMessage(from, { text: `¡No te puedes regalar un personaje a ti mism@! (≧∇≦)/` }, { quoted: m });
+    if (targetJid === actorJid || targetJid.endsWith('@g.us')) {
+        return await sock.sendMessage(from, { text: `¡No te puedes regalar un personaje a ti mism@ ni a un grupo! (≧∇≦)/` }, { quoted: m });
     }
 
-    const remitente = await obtenerUsuario(sender || from, pushName);
+    const remitente = await obtenerUsuario(actorJid, pushName);
     const index = (remitente.harem || []).findIndex(w => w.nombre.toLowerCase().includes(nombrePersonaje.toLowerCase()));
 
     if (index === -1) {
@@ -341,12 +450,12 @@ export async function manejarGiveChar(sock, msgInfo, args) {
     await sock.sendMessage(from, { react: { text: '🎁', key: m.key } });
 
     const texto = `🎁 *¡REGALO DE PERSONAJE!* 🌸✨\n` +
-                  `@${(sender || from).split('@')[0]} le regaló con mucho amor a *${waifuRegalada.nombre}* (${waifuRegalada.anime}) a @${targetJid.split('@')[0]} 💕\n` +
+                  `@${actorJid.split('@')[0]} le regaló con mucho amor a *${waifuRegalada.nombre}* (${waifuRegalada.anime}) a @${targetJid.split('@')[0]} 💕\n` +
                   `_¡Cuídala muy bien! Ehehe~_ 🍰`;
 
     await sock.sendMessage(from, {
         text: texto,
-        mentions: [sender || from, targetJid]
+        mentions: [actorJid, targetJid]
     }, { quoted: m });
 }
 
@@ -354,18 +463,25 @@ export async function manejarGiveChar(sock, msgInfo, args) {
  * -giveallharem [@mención]
  */
 export async function manejarGiveAllHarem(sock, msgInfo, args) {
-    const { m, from, sender, pushName } = msgInfo;
+    const { m, from, pushName } = msgInfo;
+    const actorJid = resolverActor(msgInfo);
+
+    if (!actorJid) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) No pude identificar tu usuario de WhatsApp.` }, { quoted: m });
+    }
+
     const quoted = m.message?.extendedTextMessage?.contextInfo?.participant;
     const mentioned = m.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
-    const targetJid = quoted || (mentioned.length > 0 ? mentioned[0] : null);
+    let targetJid = quoted || (mentioned.length > 0 ? mentioned[0] : null);
+    if (targetJid) targetJid = jidNormalizedUser(targetJid);
 
-    if (!targetJid || targetJid === (sender || from)) {
+    if (!targetJid || targetJid === actorJid || targetJid.endsWith('@g.us')) {
         return await sock.sendMessage(from, {
             text: `(•́ω•̀)? Debes etiquetar a quién le transferirás todo tu harem.\n👉 *Ejemplo:* *-giveallharem @amigo*`
         }, { quoted: m });
     }
 
-    const remitente = await obtenerUsuario(sender || from, pushName);
+    const remitente = await obtenerUsuario(actorJid, pushName);
     if (!remitente.harem || remitente.harem.length === 0) {
         return await sock.sendMessage(from, { text: `No tienes ningún personaje para transferir.` }, { quoted: m });
     }
@@ -381,8 +497,8 @@ export async function manejarGiveAllHarem(sock, msgInfo, args) {
 
     await sock.sendMessage(from, {
         text: `📦 *¡HAREM TRANSFERIDO POR COMPLETO!*\n` +
-              `@${(sender || from).split('@')[0]} le transfirió sus *${cantidad} personajes* a @${targetJid.split('@')[0]} 💍✨`,
-        mentions: [sender || from, targetJid]
+              `@${actorJid.split('@')[0]} le transfirió sus *${cantidad} personajes* a @${targetJid.split('@')[0]} 💍✨`,
+        mentions: [actorJid, targetJid]
     }, { quoted: m });
 }
 
@@ -390,7 +506,13 @@ export async function manejarGiveAllHarem(sock, msgInfo, args) {
  * -deletewaifu / -delwaifu [nombre]
  */
 export async function manejarDeleteWaifu(sock, msgInfo, args) {
-    const { m, from, sender, pushName } = msgInfo;
+    const { m, from, pushName } = msgInfo;
+    const actorJid = resolverActor(msgInfo);
+
+    if (!actorJid) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) No pude identificar tu usuario de WhatsApp.` }, { quoted: m });
+    }
+
     const nombrePersonaje = args.join(' ').trim();
 
     if (!nombrePersonaje) {
@@ -401,7 +523,7 @@ export async function manejarDeleteWaifu(sock, msgInfo, args) {
         }, { quoted: m });
     }
 
-    const usuario = await obtenerUsuario(sender || from, pushName);
+    const usuario = await obtenerUsuario(actorJid, pushName);
     const index = (usuario.harem || []).findIndex(w => w.nombre.toLowerCase().includes(nombrePersonaje.toLowerCase()));
 
     if (index === -1) {
@@ -430,7 +552,13 @@ export async function manejarDeleteWaifu(sock, msgInfo, args) {
  * -sell / -vender [precio] [nombre]
  */
 export async function manejarSell(sock, msgInfo, args) {
-    const { m, from, sender, pushName } = msgInfo;
+    const { m, from, pushName } = msgInfo;
+    const actorJid = resolverActor(msgInfo);
+
+    if (!actorJid) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) No pude identificar tu usuario de WhatsApp.` }, { quoted: m });
+    }
+
     const precioArg = args[0];
     const precio = parseInt(precioArg, 10);
     const nombrePersonaje = args.slice(1).join(' ').trim();
@@ -443,7 +571,7 @@ export async function manejarSell(sock, msgInfo, args) {
         }, { quoted: m });
     }
 
-    const usuario = await obtenerUsuario(sender || from, pushName);
+    const usuario = await obtenerUsuario(actorJid, pushName);
     const index = (usuario.harem || []).findIndex(w => w.nombre.toLowerCase().includes(nombrePersonaje.toLowerCase()));
 
     if (index === -1) {
@@ -457,7 +585,7 @@ export async function manejarSell(sock, msgInfo, args) {
 
     const venta = {
         idVenta: 'V_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
-        vendedorId: sender || from,
+        vendedorId: actorJid,
         vendedorNombre: pushName,
         precio,
         waifu,
@@ -480,7 +608,13 @@ export async function manejarSell(sock, msgInfo, args) {
  * -buychar / -buycharacter / -comprar [nombre]
  */
 export async function manejarBuyChar(sock, msgInfo, args) {
-    const { m, from, sender, pushName } = msgInfo;
+    const { m, from, pushName } = msgInfo;
+    const actorJid = resolverActor(msgInfo);
+
+    if (!actorJid) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) No pude identificar tu usuario de WhatsApp.` }, { quoted: m });
+    }
+
     const busqueda = args.join(' ').trim().toLowerCase();
 
     if (!busqueda) {
@@ -498,13 +632,13 @@ export async function manejarBuyChar(sock, msgInfo, args) {
         }, { quoted: m });
     }
 
-    if (venta.vendedorId === (sender || from)) {
+    if (venta.vendedorId === actorJid) {
         return await sock.sendMessage(from, {
             text: `(•́ω•̀)? No puedes comprar tu propio personaje. Usa *-removesale ${venta.waifu.nombre}* si deseas recuperarla.`
         }, { quoted: m });
     }
 
-    const comprador = await obtenerUsuario(sender || from, pushName);
+    const comprador = await obtenerUsuario(actorJid, pushName);
     if ((comprador.wallet || 0) < venta.precio) {
         return await sock.sendMessage(from, {
             text: `(╥﹏╥) No tienes suficientes coins en tu Wallet ($${fNum(comprador.wallet)}). El precio es de *$${fNum(venta.precio)}* coins.`
@@ -516,11 +650,13 @@ export async function manejarBuyChar(sock, msgInfo, args) {
     comprador.harem.push(venta.waifu);
 
     const vendedor = await obtenerUsuario(venta.vendedorId, venta.vendedorNombre);
-    vendedor.wallet = (vendedor.wallet || 0) + venta.precio;
+    if (vendedor) {
+        vendedor.wallet = (vendedor.wallet || 0) + venta.precio;
+        await actualizarUsuario(vendedor);
+    }
 
     await removerVentaMercado(venta.idVenta);
     await actualizarUsuario(comprador);
-    await actualizarUsuario(vendedor);
 
     await sock.sendMessage(from, { react: { text: '🎉', key: m.key } });
 
@@ -579,7 +715,13 @@ export async function manejarHaremShop(sock, msgInfo, args) {
  * -removesale / -removerventa [nombre]
  */
 export async function manejarRemoveSale(sock, msgInfo, args) {
-    const { m, from, sender, pushName } = msgInfo;
+    const { m, from, pushName } = msgInfo;
+    const actorJid = resolverActor(msgInfo);
+
+    if (!actorJid) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) No pude identificar tu usuario de WhatsApp.` }, { quoted: m });
+    }
+
     const busqueda = args.join(' ').trim().toLowerCase();
 
     if (!busqueda) {
@@ -589,7 +731,7 @@ export async function manejarRemoveSale(sock, msgInfo, args) {
     }
 
     const mercado = obtenerMercado();
-    const venta = mercado.find(v => v.vendedorId === (sender || from) && v.waifu.nombre.toLowerCase().includes(busqueda));
+    const venta = mercado.find(v => v.vendedorId === actorJid && v.waifu.nombre.toLowerCase().includes(busqueda));
 
     if (!venta) {
         return await sock.sendMessage(from, {
@@ -597,7 +739,7 @@ export async function manejarRemoveSale(sock, msgInfo, args) {
         }, { quoted: m });
     }
 
-    const usuario = await obtenerUsuario(sender || from, pushName);
+    const usuario = await obtenerUsuario(actorJid, pushName);
     usuario.harem.push(venta.waifu);
 
     await removerVentaMercado(venta.idVenta);
@@ -609,49 +751,98 @@ export async function manejarRemoveSale(sock, msgInfo, args) {
 }
 
 /**
- * -topwaifus / -waifusboard / -wtop [página]
+ * -topwaifus / -waifusboard / -wtop [página / harem]
+ * Ranking oficial de personajes del anime más votados mundialmente
  */
 export async function manejarWaifusTop(sock, msgInfo, args) {
     const { m, from } = msgInfo;
-    const top = obtenerTopHarem();
+    const primerArg = (args[0] || '').toLowerCase();
 
-    if (top.length === 0) {
-        return await sock.sendMessage(from, { text: `Aún no hay coleccionistas de waifus registrados.` }, { quoted: m });
+    // Si pide específicamente el ranking de coleccionistas locales del bot
+    if (primerArg === 'harem' || primerArg === 'jugadores' || primerArg === 'local') {
+        const top = obtenerTopHarem();
+        if (top.length === 0) {
+            return await sock.sendMessage(from, { text: `Aún no hay coleccionistas de waifus registrados.` }, { quoted: m });
+        }
+
+        const pagina = Math.max(1, parseInt(args[1], 10) || 1);
+        const porPagina = 10;
+        const totalPaginas = Math.ceil(top.length / porPagina);
+        const inicio = (pagina - 1) * porPagina;
+        const ranking = top.slice(inicio, inicio + porPagina);
+
+        let texto = `╭━━━〔 👑 *TOP COLECCIONISTAS DE HAREM* 〕━━━╮\n` +
+                    `┃ Página: ${pagina}/${totalPaginas} | Por Valor de Harem\n` +
+                    `╰━━━━━━━━━━━━━━━━━━━━━━╯\n\n`;
+
+        const menciones = [];
+        ranking.forEach((u, i) => {
+            const puesto = inicio + i + 1;
+            const medalla = puesto === 1 ? '🥇' : (puesto === 2 ? '🥈' : (puesto === 3 ? '🥉' : '🔹'));
+            menciones.push(u.id);
+
+            texto += `${medalla} *#${puesto}* @${u.id.split('@')[0]}\n` +
+                     `   🎎 Harem: *${u.cantidadWaifus}* | 💎 Valor: *$${fNum(u.valorTotal)} coins*\n`;
+        });
+
+        texto += `\n_Para ver el top mundial de personajes escribe: *-topwaifus*_ 🍰✨`;
+        return await sock.sendMessage(from, { text: texto, mentions: menciones }, { quoted: m });
     }
 
-    const pagina = Math.max(1, parseInt(args[0], 10) || 1);
-    const porPagina = 10;
-    const totalPaginas = Math.ceil(top.length / porPagina);
-    const inicio = (pagina - 1) * porPagina;
-    const ranking = top.slice(inicio, inicio + porPagina);
+    // Por defecto: TOP MUNDIAL OFICIAL DE PERSONAJES VOTADOS POR LA COMUNIDAD (AniList)
+    await sock.sendMessage(from, { react: { text: '👑', key: m.key } });
 
-    let texto = `╭━━━〔 👑 *TOP COLECCIONISTAS DE WAIFUS* 〕━━━╮\n` +
-                `┃ Página: ${pagina}/${totalPaginas} | Por Valor de Harem\n` +
+    const pagina = Math.max(1, parseInt(primerArg, 10) || 1);
+    const rankingGlobal = await obtenerTopGlobalWaifus(pagina, 10);
+
+    if (!rankingGlobal || rankingGlobal.length === 0) {
+        return await sock.sendMessage(from, {
+            text: `(╥﹏╥) No se pudo cargar el ranking mundial en este momento. Intenta de nuevo en unos segundos.`
+        }, { quoted: m });
+    }
+
+    const inicio = (pagina - 1) * 10;
+    let texto = `╭━━━〔 👑 *TOP MUNDIAL DE PERSONAJES* 〕━━━╮\n` +
+                `┃ Página: ${pagina} • Votado por la comunidad mundial 🌎\n` +
                 `╰━━━━━━━━━━━━━━━━━━━━━━╯\n\n`;
 
     const menciones = [];
-    ranking.forEach((u, i) => {
+
+    rankingGlobal.forEach((c, i) => {
         const puesto = inicio + i + 1;
         const medalla = puesto === 1 ? '🥇' : (puesto === 2 ? '🥈' : (puesto === 3 ? '🥉' : '🔹'));
-        menciones.push(u.id);
 
-        texto += `${medalla} *#${puesto}* @${u.id.split('@')[0]}\n` +
-                 `   🎎 Harem: *${u.cantidadWaifus}* | 💎 Valor: *$${fNum(u.valorTotal)} coins*\n`;
+        const infoDuenio = buscarDuenioWaifu(c.id, c.nombre);
+        let estado = '🔓 _¡Libre!_';
+        if (infoDuenio) {
+            const tagDuenio = infoDuenio.duenio.id.split('@')[0];
+            menciones.push(infoDuenio.duenio.id);
+            estado = `💍 @${tagDuenio}`;
+        }
+
+        texto += `${medalla} *#${puesto}* *${c.nombre}*\n` +
+                 `   📺 _${c.anime}_\n` +
+                 `   ✨ ${c.rareza} (${c.estrellas}) | 💰 *$${fNum(c.valor)} coins*\n` +
+                 `   ❤️ *${fNum(c.favoritos)} votos globales* • ${estado}\n\n`;
     });
 
-    texto += `\n_¡Compite coleccionando waifus con -roll y -claim!_ 🍰✨`;
+    texto += `_📖 Escribe *-topwaifus ${pagina + 1}* para ver la siguiente página._\n` +
+             `_🏆 Escribe *-topwaifus harem* para ver el ranking de coleccionistas locales._ 🍰✨`;
 
-    await sock.sendMessage(from, {
-        text: texto,
-        mentions: menciones
-    }, { quoted: m });
+    await sock.sendMessage(from, { text: texto, mentions: menciones }, { quoted: m });
 }
 
 /**
  * -vote / -votar [nombre]
  */
 export async function manejarVote(sock, msgInfo, args) {
-    const { m, from, sender, pushName } = msgInfo;
+    const { m, from, pushName } = msgInfo;
+    const actorJid = resolverActor(msgInfo);
+
+    if (!actorJid) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) No pude identificar tu usuario de WhatsApp.` }, { quoted: m });
+    }
+
     const busqueda = args.join(' ').trim();
 
     if (!busqueda) {
@@ -660,7 +851,7 @@ export async function manejarVote(sock, msgInfo, args) {
         }, { quoted: m });
     }
 
-    const usuario = await obtenerUsuario(sender || from, pushName);
+    const usuario = await obtenerUsuario(actorJid, pushName);
     const ahora = Date.now();
     const tiempoPasado = ahora - (usuario.ultimoVoto || 0);
 
@@ -696,7 +887,13 @@ export async function manejarVote(sock, msgInfo, args) {
  * -setclaimmsg [texto]
  */
 export async function manejarSetClaimMsg(sock, msgInfo, args) {
-    const { m, from, sender, pushName } = msgInfo;
+    const { m, from, pushName } = msgInfo;
+    const actorJid = resolverActor(msgInfo);
+
+    if (!actorJid) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) No pude identificar tu usuario de WhatsApp.` }, { quoted: m });
+    }
+
     const nuevoMensaje = args.join(' ').trim();
 
     if (!nuevoMensaje) {
@@ -705,7 +902,7 @@ export async function manejarSetClaimMsg(sock, msgInfo, args) {
         }, { quoted: m });
     }
 
-    const usuario = await obtenerUsuario(sender || from, pushName);
+    const usuario = await obtenerUsuario(actorJid, pushName);
     usuario.claimMsg = nuevoMensaje;
     await actualizarUsuario(usuario);
 
@@ -718,8 +915,14 @@ export async function manejarSetClaimMsg(sock, msgInfo, args) {
  * -delclaimmsg
  */
 export async function manejarDelClaimMsg(sock, msgInfo) {
-    const { m, from, sender, pushName } = msgInfo;
-    const usuario = await obtenerUsuario(sender || from, pushName);
+    const { m, from, pushName } = msgInfo;
+    const actorJid = resolverActor(msgInfo);
+
+    if (!actorJid) {
+        return await sock.sendMessage(from, { text: `(╥﹏╥) No pude identificar tu usuario de WhatsApp.` }, { quoted: m });
+    }
+
+    const usuario = await obtenerUsuario(actorJid, pushName);
     usuario.claimMsg = '';
     await actualizarUsuario(usuario);
 

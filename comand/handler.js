@@ -41,12 +41,14 @@ import {
     manejarBaltop,
     manejarEconomyInfo
 } from './economia.js';
+import { jidNormalizedUser } from '@whiskeysockets/baileys';
 import {
     manejarRoll,
     manejarClaim,
     manejarHarem,
     manejarCharInfo,
     manejarCharImage,
+    manejarCharVideo,
     manejarGiveChar,
     manejarGiveAllHarem,
     manejarDeleteWaifu,
@@ -121,14 +123,15 @@ function generarMenu(pushName) {
            ` 💍 *${PREFIJO}claim* o *${PREFIJO}c* : Reclamar la waifu que acaba de salir en la ruleta.\n` +
            ` 🌸 *${PREFIJO}harem* o *${PREFIJO}waifus* : Ver tu colección de waifus reclamadas.\n` +
            ` ℹ️ *${PREFIJO}winfo [nombre]* : Información y valor de cualquier personaje.\n` +
-           ` 🖼️ *${PREFIJO}cimage [nombre]* : Ver imagen en alta definición de un personaje.\n` +
+           ` 🖼️ *${PREFIJO}cimage [nombre]* : Buscar fotos infinitas de cualquier waifu (o aleatoria de nekos.best).\n` +
+           ` 🎬 *${PREFIJO}cvideo [nombre]* : Video/GIF animado de una waifu o anime.\n` +
            ` 🎁 *${PREFIJO}regalar [@tag] [nombre]* : Regalar un personaje de tu harem a un amigo.\n` +
            ` 🏷️ *${PREFIJO}vender [precio] [nombre]* : Poner un personaje a la venta en la tienda.\n` +
            ` 🛒 *${PREFIJO}tienda* o *${PREFIJO}wshop* : Ver personajes en venta por otros usuarios.\n` +
            ` 🛍️ *${PREFIJO}comprar [nombre]* : Comprar un personaje en venta.\n` +
            ` ↩️ *${PREFIJO}removerventa [nombre]* : Retirar tu waifu del mercado.\n` +
            ` 🕊️ *${PREFIJO}delwaifu [nombre]* : Liberar un personaje a cambio del 50% de su valor.\n` +
-           ` 👑 *${PREFIJO}wtop* o *${PREFIJO}topwaifus* : Ranking de los mayores coleccionistas.\n` +
+           ` 👑 *${PREFIJO}wtop* o *${PREFIJO}topwaifus [pág]* : Top mundial oficial de waifus (*-wtop harem* para coleccionistas).\n` +
            ` 💖 *${PREFIJO}votar [nombre]* : Votar por una waifu (+coins y +popularidad).\n` +
            ` 💬 *${PREFIJO}setclaim [texto]* : Personalizar tu frase de victoria al reclamar.\n\n` +
            `⚙️ *───「 SISTEMA Y DIAGNÓSTICO 」───* ⚙️\n` +
@@ -153,7 +156,11 @@ export async function procesarMensajes(sock, chatUpdate) {
 
         const from = m.key.remoteJid;
         const esGrupo = from.endsWith('@g.us');
-        const sender = esGrupo ? m.key.participant : from;
+        const botJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
+        const rawSender = m.key.fromMe
+            ? botJid
+            : (esGrupo ? (m.key.participant || m.participant) : from);
+        const sender = rawSender ? jidNormalizedUser(rawSender) : null;
         const pushName = m.pushName || 'Amig@';
 
         // Extraer texto del mensaje (conversación normal, mensaje extendido, fotos o videos)
@@ -367,6 +374,10 @@ export async function procesarMensajes(sock, chatUpdate) {
             await manejarCharImage(sock, msgInfo, args);
             continue;
         }
+        if (['charvideo', 'waifuvideo', 'cvideo', 'wvideo'].includes(comando)) {
+            await manejarCharVideo(sock, msgInfo, args);
+            continue;
+        }
         if (['givechar', 'givewaifu', 'regalar'].includes(comando)) {
             await manejarGiveChar(sock, msgInfo, args);
             continue;
@@ -395,7 +406,7 @@ export async function procesarMensajes(sock, chatUpdate) {
             await manejarRemoveSale(sock, msgInfo, args);
             continue;
         }
-        if (['topwaifus', 'waifusboard', 'wtop'].includes(comando)) {
+        if (['topwaifus', 'waifusboard', 'wtop', 'topglobal', 'chartop', 'waifustop'].includes(comando)) {
             await manejarWaifusTop(sock, msgInfo, args);
             continue;
         }
